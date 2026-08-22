@@ -1,0 +1,77 @@
+name: Build Feed the Frog APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Find Feed the Frog ZIP
+        shell: bash
+        run: |
+          ZIP_FILE="$(find . -maxdepth 1 -type f -name 'FeedTheFrog-Android-*.zip' | head -n 1)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Feed the Frog ZIP was not found."
+            exit 1
+          fi
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
+          echo "Using $ZIP_FILE"
+
+      - name: Extract project
+        shell: bash
+        run: |
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+      - name: Build APK
+        shell: bash
+        run: |
+          set -e
+
+          PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
+
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "Could not find the Android project after extracting the ZIP."
+            exit 1
+          fi
+
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          cd "$PROJECT_DIR"
+
+          echo "Building project in: $PROJECT_DIR"
+
+          if [ -f "build-apk.sh" ]; then
+            chmod +x build-apk.sh
+            ./build-apk.sh
+          elif [ -f "gradlew" ]; then
+            chmod +x gradlew
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-APK
+          path: extracted/**/*.apk
+          if-no-files-found: error
