@@ -1,0 +1,42 @@
+[
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/drawable_ic_frog.xml.flat",
+        "source": "com.feedthefrog.game.app-main-37:/drawable/ic_frog.xml"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_bee_bad.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/bee_bad.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_unlock.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/unlock.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_upgrade.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/upgrade.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_buzz_loop.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/buzz_loop.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_tongue_snap.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/tongue_snap.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_golden.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/golden.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_grab.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/grab.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_dice_roll.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/dice_roll.ogg"
+    },
+    {
+        "merged": "com.feedthefrog.game.app-debug-35:/raw_catch_sound.ogg.flat",
+        "source": "com.feedthefrog.game.app-main-37:/raw/catch_sound.ogg"
+    }
+]

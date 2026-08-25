@@ -1,0 +1,11 @@
+com.feedthefrog.game
+drawable ic_frog
+raw bee_bad
+raw buzz_loop
+raw catch_sound
+raw dice_roll
+raw golden
+raw grab
+raw tongue_snap
+raw unlock
+raw upgrade

@@ -1,0 +1,7 @@
+#!/bin/sh
+DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if [ ! -f "$DIR/gradle/wrapper/gradle-wrapper.jar" ]; then
+  echo "gradle-wrapper.jar is not bundled in this prototype. Open the project in Android Studio, or install Gradle 9.5 and run: gradle wrapper --gradle-version 9.5.0"
+  exit 1
+fi
+exec java -classpath "$DIR/gradle/wrapper/gradle-wrapper.jar" org.gradle.wrapper.GradleWrapperMain "$@"
