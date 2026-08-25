@@ -100,7 +100,7 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch Android source for current toolchain
+      - name: Patch Android source for current toolchain and gameplay
         shell: bash
         run: |
           set -euo pipefail
@@ -114,6 +114,7 @@ jobs:
           fi
 
           sed -i '/^import androidx\.compose\.foundation\.layout\.weight$/d' "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_tap_game.py" "$MAIN_FILE"
 
       - name: Build APK
         id: build
@@ -171,7 +172,7 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-v0.7.2-debug-apk
+          name: FeedTheFrog-tap-multicatch-debug-apk
           path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
