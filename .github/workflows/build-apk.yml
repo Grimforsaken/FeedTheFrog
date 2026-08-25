@@ -86,16 +86,20 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch reserved Android resource name
+      - name: Patch Android source for current toolchain
         shell: bash
         run: |
           set -euo pipefail
           PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          MAIN_FILE="$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
+
           if [ -f "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" ]; then
             mv "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" "$PROJECT_DIR/app/src/main/res/raw/catch_sound.ogg"
-            sed -i 's/R\.raw\.catch/R.raw.catch_sound/g' "$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
+            sed -i 's/R\.raw\.catch/R.raw.catch_sound/g' "$MAIN_FILE"
           fi
+
+          sed -i '/^import androidx\.compose\.foundation\.layout\.weight$/d' "$MAIN_FILE"
 
       - name: Build APK
         id: build
