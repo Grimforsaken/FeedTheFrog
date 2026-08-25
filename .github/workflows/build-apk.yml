@@ -7,6 +7,7 @@ on:
       - main
     paths-ignore:
       - "build-error.log"
+      - "FeedTheFrog-latest.apk"
 
 permissions:
   contents: write
@@ -131,7 +132,7 @@ jobs:
         shell: bash
         run: exit 1
 
-      - name: Publish permanent APK release
+      - name: Publish permanent APK file
         if: steps.build.outcome == 'success'
         shell: bash
         env:
@@ -143,15 +144,36 @@ jobs:
             echo "Built APK could not be located."
             exit 1
           fi
-          cp "$APK_FILE" FeedTheFrog-latest.apk
 
-          if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest FeedTheFrog-latest.apk --clobber
-          else
-            gh release create latest FeedTheFrog-latest.apk \
-              --title "FeedTheFrog Latest APK" \
-              --notes "Latest successful debug APK build for FeedTheFrog."
-          fi
+          CURRENT_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/contents/FeedTheFrog-latest.apk" --jq .sha 2>/dev/null || true)"
+
+          python3 - "$APK_FILE" "$CURRENT_SHA" <<'PY' > /tmp/apk-payload.json
+          import base64
+          import json
+          import os
+          import sys
+
+          apk_path = sys.argv[1]
+          current_sha = sys.argv[2]
+          with open(apk_path, "rb") as f:
+              encoded = base64.b64encode(f.read()).decode("ascii")
+
+          payload = {
+              "message": "Publish latest FeedTheFrog APK [skip ci]",
+              "content": encoded,
+              "branch": os.environ.get("GITHUB_REF_NAME", "main"),
+          }
+          if current_sha:
+              payload["sha"] = current_sha
+
+          print(json.dumps(payload))
+          PY
+
+          gh api \
+            --method PUT \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/contents/FeedTheFrog-latest.apk" \
+            --input /tmp/apk-payload.json
 
       - name: Remove stale failure log
         if: steps.build.outcome == 'success'
