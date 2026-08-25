@@ -134,7 +134,6 @@ jobs:
         if: steps.build.outcome == 'failure'
         shell: bash
         run: |
-          git pull --rebase origin main || true
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add build-error.log
@@ -157,14 +156,15 @@ jobs:
             exit 1
           fi
 
-          cp "$APK_FILE" FeedTheFrog-latest.apk
-          rm -f build-error.log
+          cp "$APK_FILE" /tmp/FeedTheFrog-latest.apk
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main
+          git fetch origin main
+          git reset --hard origin/main
+          cp /tmp/FeedTheFrog-latest.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish latest FeedTheFrog APK [skip ci]" || true
+          git commit -m "Publish latest FeedTheFrog APK [skip ci]"
           git push origin HEAD:main
 
       - name: Upload APK artifact
