@@ -7,7 +7,6 @@ on:
       - main
     paths-ignore:
       - "build-error.log"
-      - "FeedTheFrog-latest.apk"
 
 permissions:
   contents: write
@@ -132,9 +131,11 @@ jobs:
         shell: bash
         run: exit 1
 
-      - name: Publish latest APK to repository
+      - name: Publish permanent APK release
         if: steps.build.outcome == 'success'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
@@ -143,11 +144,14 @@ jobs:
             exit 1
           fi
           cp "$APK_FILE" FeedTheFrog-latest.apk
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add FeedTheFrog-latest.apk
-          git commit -m "Publish latest FeedTheFrog APK [skip ci]" || true
-          git push
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest FeedTheFrog-latest.apk --clobber
+          else
+            gh release create latest FeedTheFrog-latest.apk \
+              --title "FeedTheFrog Latest APK" \
+              --notes "Latest successful debug APK build for FeedTheFrog."
+          fi
 
       - name: Remove stale failure log
         if: steps.build.outcome == 'success'
