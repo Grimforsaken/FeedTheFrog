@@ -116,6 +116,7 @@ jobs:
           sed -i '/^import androidx\.compose\.foundation\.layout\.weight$/d' "$MAIN_FILE"
           python3 "$GITHUB_WORKSPACE/patch_tap_game.py" "$MAIN_FILE"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v2.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_ui_art_costs.py" "$MAIN_FILE" "$PROJECT_DIR"
 
       - name: Build APK
         id: build
@@ -173,7 +174,7 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-challenges-timer-poison-debug-apk
+          name: FeedTheFrog-art-high-cost-debug-apk
           path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
