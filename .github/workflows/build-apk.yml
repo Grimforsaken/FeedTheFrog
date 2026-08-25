@@ -100,13 +100,14 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch Android source for current toolchain and gameplay
+      - name: Patch current gameplay, economy, art, and TV
         shell: bash
         run: |
           set -euo pipefail
           PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
           MAIN_FILE="$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
+          APP_GRADLE="$PROJECT_DIR/app/build.gradle.kts"
 
           if [ -f "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" ]; then
             mv "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" "$PROJECT_DIR/app/src/main/res/raw/catch_sound.ogg"
@@ -119,7 +120,22 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_ui_art_costs.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_tv_subscription.py" "$MAIN_FILE" "$PROJECT_DIR"
 
-      - name: Build APK
+          sed -i 's/versionCode = 8/versionCode = 9/' "$APP_GRADLE"
+          sed -i 's/versionName = "0.7.2"/versionName = "0.8.0-tv1"/' "$APP_GRADLE"
+
+          grep -q 'COMMERCIAL BREAK' "$MAIN_FILE"
+          grep -q 'TV: POND LIFE' "$MAIN_FILE"
+          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_tv_background.webp"
+          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm"
+
+          echo "TV image bytes: $(stat -c%s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_tv_background.webp")"
+          echo "Pond video bytes: $(stat -c%s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm")"
+
+          # The source ZIP contains old Gradle/build caches. Remove them so patched
+          # source and newly-added TV resources cannot be skipped as stale outputs.
+          rm -rf "$PROJECT_DIR/.gradle" "$PROJECT_DIR/app/build"
+
+      - name: Build APK from clean source
         id: build
         shell: bash
         continue-on-error: true
@@ -132,7 +148,29 @@ jobs:
           fi
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
           cd "$PROJECT_DIR"
-          gradle --no-daemon --console=plain --stacktrace :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
+          gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
+
+      - name: Verify APK contains TV update
+        if: steps.build.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
+          if [ -z "$APK_FILE" ]; then
+            echo "Built APK could not be located."
+            exit 1
+          fi
+
+          unzip -l "$APK_FILE" > apk-contents.txt
+          if ! grep -q 'res/raw/subscription_pond.webm' apk-contents.txt; then
+            echo "ERROR: Pond subscription video is missing from APK."
+            exit 1
+          fi
+          if ! grep -q 'ftf_tv_background' apk-contents.txt; then
+            echo "ERROR: Retro TV background is missing from APK."
+            exit 1
+          fi
+          echo "Verified: APK contains retro TV art and Pond Life subscription video."
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -155,11 +193,6 @@ jobs:
         run: |
           set -euo pipefail
           APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
-          if [ -z "$APK_FILE" ]; then
-            echo "Built APK could not be located."
-            exit 1
-          fi
-
           cp "$APK_FILE" /tmp/FeedTheFrog-latest.apk
 
           git config user.name "github-actions[bot]"
@@ -168,14 +201,14 @@ jobs:
           git reset --hard origin/main
           cp /tmp/FeedTheFrog-latest.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish latest FeedTheFrog APK [skip ci]"
+          git commit -m "Publish FeedTheFrog TV v0.8.0 APK [skip ci]"
           git push origin HEAD:main
 
       - name: Upload APK artifact
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-tv-subscription-video1-debug-apk
+          name: FeedTheFrog-TV-v0.8.0-debug-apk
           path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
