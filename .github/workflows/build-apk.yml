@@ -86,6 +86,17 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
+      - name: Patch reserved Android resource name
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          if [ -f "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" ]; then
+            mv "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" "$PROJECT_DIR/app/src/main/res/raw/catch_sound.ogg"
+            sed -i 's/R\.raw\.catch/R.raw.catch_sound/g' "$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
+          fi
+
       - name: Build APK
         id: build
         shell: bash
