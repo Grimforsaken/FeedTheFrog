@@ -53,28 +53,17 @@ jobs:
         run: |
           set -euo pipefail
           sdkmanager "platform-tools"
-
-          PLATFORM_PACKAGE="$(sdkmanager --list \
-            | awk -F'|' '/platforms;android-37(\.0)?[[:space:]]*\|/ {gsub(/[[:space:]]/, "", $1); print $1; exit}')"
-
+          PLATFORM_PACKAGE="$(sdkmanager --list | awk -F'|' '/platforms;android-37(\.0)?[[:space:]]*\|/ {gsub(/[[:space:]]/, "", $1); print $1; exit}')"
           if [ -z "$PLATFORM_PACKAGE" ]; then
             echo "Android API 37 platform package was not found by sdkmanager."
-            sdkmanager --list | grep 'platforms;android-37' || true
             exit 1
           fi
-
           sdkmanager "$PLATFORM_PACKAGE"
-
-          BUILD_TOOLS="$(sdkmanager --list \
-            | awk -F'|' '/build-tools;37\./ {gsub(/[[:space:]]/, "", $1); print $1}' \
-            | sort -V \
-            | tail -n 1)"
-
+          BUILD_TOOLS="$(sdkmanager --list | awk -F'|' '/build-tools;37\./ {gsub(/[[:space:]]/, "", $1); print $1}' | sort -V | tail -n 1)"
           if [ -z "$BUILD_TOOLS" ]; then
             echo "No Android Build-Tools 37.x.x package was found."
             exit 1
           fi
-
           sdkmanager "$BUILD_TOOLS"
 
       - name: Verify Gradle
@@ -91,7 +80,6 @@ jobs:
             exit 1
           fi
           echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-          echo "Using $ZIP_FILE"
 
       - name: Extract project
         shell: bash
@@ -128,11 +116,6 @@ jobs:
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_tv_background.webp"
           test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm"
 
-          echo "TV image bytes: $(stat -c%s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_tv_background.webp")"
-          echo "Pond video bytes: $(stat -c%s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm")"
-
-          # The source ZIP contains old Gradle/build caches. Remove them so patched
-          # source and newly-added TV resources cannot be skipped as stale outputs.
           rm -rf "$PROJECT_DIR/.gradle" "$PROJECT_DIR/app/build"
 
       - name: Build APK from clean source
@@ -142,35 +125,21 @@ jobs:
         run: |
           set -o pipefail
           PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "Could not find the Android project after extracting the ZIP." | tee build-error.log
-            exit 1
-          fi
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
           cd "$PROJECT_DIR"
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
 
-      - name: Verify APK contains TV update
+      - name: Verify and preserve TV APK
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
           APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
-          if [ -z "$APK_FILE" ]; then
-            echo "Built APK could not be located."
-            exit 1
-          fi
-
           unzip -l "$APK_FILE" > apk-contents.txt
-          if ! grep -q 'res/raw/subscription_pond.webm' apk-contents.txt; then
-            echo "ERROR: Pond subscription video is missing from APK."
-            exit 1
-          fi
-          if ! grep -q 'ftf_tv_background' apk-contents.txt; then
-            echo "ERROR: Retro TV background is missing from APK."
-            exit 1
-          fi
-          echo "Verified: APK contains retro TV art and Pond Life subscription video."
+          grep -q 'res/raw/subscription_pond.webm' apk-contents.txt
+          grep -q 'ftf_tv_background' apk-contents.txt
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.0.apk
+          echo "Verified TV APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.0.apk)"
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -187,28 +156,25 @@ jobs:
         shell: bash
         run: exit 1
 
+      - name: Upload verified APK artifact
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-TV-v0.8.0-verified
+          path: /tmp/FeedTheFrog-TV-v0.8.0.apk
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Publish permanent APK file
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
-          APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
-          cp "$APK_FILE" /tmp/FeedTheFrog-latest.apk
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-          cp /tmp/FeedTheFrog-latest.apk FeedTheFrog-latest.apk
+          cp /tmp/FeedTheFrog-TV-v0.8.0.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish FeedTheFrog TV v0.8.0 APK [skip ci]"
+          git commit -m "Publish verified FeedTheFrog TV v0.8.0 APK [skip ci]" || true
           git push origin HEAD:main
-
-      - name: Upload APK artifact
-        if: steps.build.outcome == 'success'
-        uses: actions/upload-artifact@v4
-        with:
-          name: FeedTheFrog-TV-v0.8.0-debug-apk
-          path: extracted/**/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 30
