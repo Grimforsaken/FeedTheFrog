@@ -135,8 +135,6 @@ jobs:
       - name: Publish permanent APK file
         if: steps.build.outcome == 'success'
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
@@ -145,48 +143,15 @@ jobs:
             exit 1
           fi
 
-          CURRENT_SHA="$(gh api "repos/${GITHUB_REPOSITORY}/contents/FeedTheFrog-latest.apk" --jq .sha 2>/dev/null || true)"
+          cp "$APK_FILE" FeedTheFrog-latest.apk
+          rm -f build-error.log
 
-          python3 - "$APK_FILE" "$CURRENT_SHA" <<'PY' > /tmp/apk-payload.json
-          import base64
-          import json
-          import os
-          import sys
-
-          apk_path = sys.argv[1]
-          current_sha = sys.argv[2]
-          with open(apk_path, "rb") as f:
-              encoded = base64.b64encode(f.read()).decode("ascii")
-
-          payload = {
-              "message": "Publish latest FeedTheFrog APK [skip ci]",
-              "content": encoded,
-              "branch": os.environ.get("GITHUB_REF_NAME", "main"),
-          }
-          if current_sha:
-              payload["sha"] = current_sha
-
-          print(json.dumps(payload))
-          PY
-
-          gh api \
-            --method PUT \
-            -H "Accept: application/vnd.github+json" \
-            "repos/${GITHUB_REPOSITORY}/contents/FeedTheFrog-latest.apk" \
-            --input /tmp/apk-payload.json
-
-      - name: Remove stale failure log
-        if: steps.build.outcome == 'success'
-        shell: bash
-        run: |
-          if [ -f build-error.log ]; then
-            rm build-error.log
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -A
-            git commit -m "Remove resolved Android build error [skip ci]" || true
-            git push || true
-          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main
+          git add -f FeedTheFrog-latest.apk
+          git commit -m "Publish latest FeedTheFrog APK [skip ci]" || true
+          git push origin HEAD:main
 
       - name: Upload APK artifact
         if: steps.build.outcome == 'success'
