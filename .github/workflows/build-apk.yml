@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "build-error.log"
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -82,19 +87,50 @@ jobs:
           unzip -q "$ZIP_FILE" -d extracted
 
       - name: Build APK
+        id: build
         shell: bash
+        continue-on-error: true
         run: |
-          set -euo pipefail
+          set -o pipefail
           PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
           if [ -z "$PROJECT_FILE" ]; then
-            echo "Could not find the Android project after extracting the ZIP."
+            echo "Could not find the Android project after extracting the ZIP." | tee build-error.log
             exit 1
           fi
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
           cd "$PROJECT_DIR"
-          gradle --no-daemon --stacktrace :app:assembleDebug
+          gradle --no-daemon --console=plain --stacktrace :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
+
+      - name: Save failure log to repository
+        if: steps.build.outcome == 'failure'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add build-error.log
+          git commit -m "Save latest Android build error [skip ci]" || true
+          git push
+
+      - name: Stop after failed build
+        if: steps.build.outcome == 'failure'
+        shell: bash
+        run: exit 1
+
+      - name: Remove stale failure log
+        if: steps.build.outcome == 'success'
+        shell: bash
+        run: |
+          if [ -f build-error.log ]; then
+            rm build-error.log
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Remove resolved Android build error [skip ci]" || true
+            git push || true
+          fi
 
       - name: Upload APK
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: FeedTheFrog-v0.7.2-debug-apk
