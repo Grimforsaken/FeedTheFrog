@@ -99,6 +99,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v4.py" "$MAIN_FILE"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v5.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/prepare_v8_assets.py"
+          python3 "$GITHUB_WORKSPACE/patch_v6_preflight.py" "$MAIN_FILE"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v6.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
 
