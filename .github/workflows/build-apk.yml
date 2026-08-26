@@ -88,7 +88,7 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch current gameplay, economy, art, TV, and frog
+      - name: Patch current gameplay, economy, art, TV, frog, and roaming
         shell: bash
         run: |
           set -euo pipefail
@@ -108,14 +108,17 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_ui_art_costs.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_tv_subscription.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v3.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v4.py" "$MAIN_FILE"
 
-          sed -i 's/versionCode = 8/versionCode = 10/' "$APP_GRADLE"
-          sed -i 's/versionName = "0.7.2"/versionName = "0.8.1-frog-auto"/' "$APP_GRADLE"
+          sed -i 's/versionCode = 8/versionCode = 11/' "$APP_GRADLE"
+          sed -i 's/versionName = "0.7.2"/versionName = "0.8.2-roam-mouth"/' "$APP_GRADLE"
 
           grep -q 'COMMERCIAL BREAK' "$MAIN_FILE"
           grep -q 'TV: POND LIFE' "$MAIN_FILE"
           grep -q 'AUTO_EAT_COST' "$MAIN_FILE"
           grep -q 'autoEatEnabled' "$MAIN_FILE"
+          grep -q 'SECOND_DIE_COST = 500_000' "$MAIN_FILE"
+          grep -q 'screenLeft = boardSize.width \* 0.10f' "$MAIN_FILE"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_tv_background.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_frog.webp"
           test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm"
@@ -133,7 +136,7 @@ jobs:
           cd "$PROJECT_DIR"
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
 
-      - name: Verify and preserve frog APK
+      - name: Verify and preserve v0.8.2 APK
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
@@ -143,8 +146,8 @@ jobs:
           grep -q 'res/raw/subscription_pond.webm' apk-contents.txt
           grep -q 'ftf_tv_background' apk-contents.txt
           grep -q 'ftf_frog' apk-contents.txt
-          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.1.apk
-          echo "Verified frog APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.1.apk)"
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.2.apk
+          echo "Verified v0.8.2 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.2.apk)"
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -165,8 +168,8 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-TV-v0.8.1-frog-auto
-          path: /tmp/FeedTheFrog-TV-v0.8.1.apk
+          name: FeedTheFrog-TV-v0.8.2-roam-mouth
+          path: /tmp/FeedTheFrog-TV-v0.8.2.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -179,7 +182,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-          cp /tmp/FeedTheFrog-TV-v0.8.1.apk FeedTheFrog-latest.apk
+          cp /tmp/FeedTheFrog-TV-v0.8.2.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish FeedTheFrog v0.8.1 frog/auto-eat APK [skip ci]" || true
+          git commit -m "Publish FeedTheFrog v0.8.2 roaming/tongue APK [skip ci]" || true
           git push origin HEAD:main
