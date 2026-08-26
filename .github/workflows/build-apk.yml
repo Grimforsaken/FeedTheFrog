@@ -9,6 +9,12 @@ on:
       - "build-error.log"
       - "latest-run.txt"
       - "FeedTheFrog-latest.apk"
+      - "binary_assets/**"
+      - "prepare_v8_assets.py"
+      - "patch_gameplay_v6.py"
+      - "patch_tv_v2.py"
+      - "ui_assets/**"
+      - "tv_assets/**"
 
 permissions:
   contents: write
@@ -54,41 +60,23 @@ jobs:
           set -euo pipefail
           sdkmanager "platform-tools"
           PLATFORM_PACKAGE="$(sdkmanager --list | awk -F'|' '/platforms;android-37(\.0)?[[:space:]]*\|/ {gsub(/[[:space:]]/, "", $1); print $1; exit}')"
-          if [ -z "$PLATFORM_PACKAGE" ]; then
-            echo "Android API 37 platform package was not found by sdkmanager."
-            exit 1
-          fi
+          test -n "$PLATFORM_PACKAGE"
           sdkmanager "$PLATFORM_PACKAGE"
           BUILD_TOOLS="$(sdkmanager --list | awk -F'|' '/build-tools;37\./ {gsub(/[[:space:]]/, "", $1); print $1}' | sort -V | tail -n 1)"
-          if [ -z "$BUILD_TOOLS" ]; then
-            echo "No Android Build-Tools 37.x.x package was found."
-            exit 1
-          fi
+          test -n "$BUILD_TOOLS"
           sdkmanager "$BUILD_TOOLS"
 
-      - name: Verify Gradle
-        shell: bash
-        run: gradle --version
-
-      - name: Find Feed the Frog ZIP
+      - name: Find and extract Feed the Frog project
         shell: bash
         run: |
           set -euo pipefail
           ZIP_FILE="$(find . -maxdepth 1 -type f -name 'FeedTheFrog-Android-*.zip' | sort | tail -n 1)"
-          if [ -z "$ZIP_FILE" ]; then
-            echo "Feed the Frog ZIP was not found."
-            exit 1
-          fi
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_ENV"
-
-      - name: Extract project
-        shell: bash
-        run: |
+          test -n "$ZIP_FILE"
           rm -rf extracted
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch current gameplay, economy, art, TV, frog, roaming, and development upgrades
+      - name: Patch v0.8.4 gameplay, art, immunities, and all 3 TV videos
         shell: bash
         run: |
           set -euo pipefail
@@ -110,23 +98,27 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v3.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v4.py" "$MAIN_FILE"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v5.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/prepare_v8_assets.py"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v6.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
 
-          sed -i 's/versionCode = 8/versionCode = 12/' "$APP_GRADLE"
-          sed -i 's/versionName = "0.7.2"/versionName = "0.8.3-dev-upgrades"/' "$APP_GRADLE"
+          sed -i 's/versionCode = 8/versionCode = 13/' "$APP_GRADLE"
+          sed -i 's/versionName = "0.7.2"/versionName = "0.8.4-dev-bugs-tv3"/' "$APP_GRADLE"
 
-          grep -q 'COMMERCIAL BREAK' "$MAIN_FILE"
-          grep -q 'TV: POND LIFE' "$MAIN_FILE"
-          grep -q 'AUTO_EAT_COST = 1' "$MAIN_FILE"
-          grep -q 'SECOND_DIE_COST = 1' "$MAIN_FILE"
-          grep -q 'POISON_IMMUNITY_COST = 1' "$MAIN_FILE"
-          grep -q 'COIN_MULTIPLIER_COSTS = intArrayOf(1, 1, 1, 1)' "$MAIN_FILE"
-          grep -q 'poisonImmune' "$MAIN_FILE"
-          grep -q 'coinMultiplierLevel' "$MAIN_FILE"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_tv_background.webp"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_frog.webp"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_poison_frog.webp"
+          grep -q 'BEE_IMMUNITY_COST = 1' "$MAIN_FILE"
+          grep -q 'FIREFLY_IMMUNITY_COST = 1' "$MAIN_FILE"
+          grep -q 'BUG_UNLOCK_COST = 1' "$MAIN_FILE"
+          grep -q 'FIREFLY_DAMAGE_PER_SECOND = 5' "$MAIN_FILE"
+          grep -q 'POISON_DAMAGE_PER_SECOND = 3' "$MAIN_FILE"
+          grep -q 'TV: MEADOW' "$MAIN_FILE"
+          grep -q 'TV: SKUNK WALK' "$MAIN_FILE"
+          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/frog_helmet.webp"
+          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_firefly.webp"
+          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_poison_fly.webp"
+          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/rain_cloud_0.webp"
           test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm"
-
+          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_meadow.mp4"
+          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_skunk.mp4"
           rm -rf "$PROJECT_DIR/.gradle" "$PROJECT_DIR/app/build"
 
       - name: Build APK from clean source
@@ -140,7 +132,7 @@ jobs:
           cd "$PROJECT_DIR"
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
 
-      - name: Verify and preserve v0.8.3 development APK
+      - name: Verify and preserve v0.8.4 APK
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
@@ -148,11 +140,13 @@ jobs:
           APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
           unzip -l "$APK_FILE" > apk-contents.txt
           grep -q 'res/raw/subscription_pond.webm' apk-contents.txt
-          grep -q 'ftf_tv_background' apk-contents.txt
-          grep -q 'ftf_frog' apk-contents.txt
-          grep -q 'ftf_poison_frog' apk-contents.txt
-          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.3-dev.apk
-          echo "Verified v0.8.3 development APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.3-dev.apk)"
+          grep -q 'res/raw/subscription_meadow.mp4' apk-contents.txt
+          grep -q 'res/raw/subscription_skunk.mp4' apk-contents.txt
+          grep -q 'frog_helmet' apk-contents.txt
+          grep -q 'bug_firefly' apk-contents.txt
+          grep -q 'bug_poison_fly' apk-contents.txt
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.4.apk
+          echo "Verified v0.8.4 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.4.apk)"
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -173,8 +167,8 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-TV-v0.8.3-dev-upgrades
-          path: /tmp/FeedTheFrog-TV-v0.8.3-dev.apk
+          name: FeedTheFrog-TV-v0.8.4-dev-bugs-tv3
+          path: /tmp/FeedTheFrog-TV-v0.8.4.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -187,7 +181,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-          cp /tmp/FeedTheFrog-TV-v0.8.3-dev.apk FeedTheFrog-latest.apk
+          cp /tmp/FeedTheFrog-TV-v0.8.4.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish FeedTheFrog v0.8.3 development upgrades APK [skip ci]" || true
+          git commit -m "Publish FeedTheFrog v0.8.4 bugs and 3 TV videos APK [skip ci]" || true
           git push origin HEAD:main
