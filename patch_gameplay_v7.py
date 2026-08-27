@@ -28,8 +28,7 @@ def regex_once(pattern: str, replacement: str, label: str, flags=0) -> None:
 
 # ---------------------------------------------------------------------------
 # Replace the three v0.8.5 visual assets after every older patch has run.
-# This deliberately overwrites the malformed v0.8.4 poison-frog WebP, which
-# crashed Compose when poison immunity switched painterResource to it.
+# The workflow subsequently overwrites these with the validated PNG v10 copies.
 # ---------------------------------------------------------------------------
 generated = repo_root / 'generated_assets_v9'
 drawable = project_dir / 'app' / 'src' / 'main' / 'res' / 'drawable-nodpi'
@@ -71,8 +70,10 @@ if removed_cards != 1:
     raise SystemExit(f'v7 patch failed: Auto-Eat shop card removal (matches={removed_cards})')
 
 # ---------------------------------------------------------------------------
-# New Bee Immunity mask. It remains a completely separate overlay so it works
-# with both the green frog and the blue poison-immunity frog.
+# Bee Immunity face mask. The previous build sized the helmet against the whole
+# frog/lily-pad sprite, making it too large and too high. This version sizes it
+# to the frog's head area and lowers it so the eye and mouth openings line up.
+# It remains a separate overlay, so it works on green and poison-blue frogs.
 # ---------------------------------------------------------------------------
 helmet_pattern = re.compile(
     r'\n\s*if \(beeImmune\) \{\s*\n\s*Image\(\s*\n\s*painter = painterResource\(R\.drawable\.frog_helmet\),.*?\n\s*\)\s*\n\s*\}',
@@ -86,8 +87,8 @@ helmet_replacement = '''
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = maxHeight * 0.57f + frogBob - frogWidth * 0.22f)
-                    .width(frogWidth * 0.84f)
+                    .offset(y = maxHeight * 0.57f + frogBob - frogWidth * 0.10f)
+                    .width(frogWidth * 0.68f)
             )
         }'''
 text, helmet_matches = helmet_pattern.subn(helmet_replacement, text, count=1)
@@ -95,8 +96,52 @@ if helmet_matches != 1:
     raise SystemExit(f'v7 patch failed: bee helmet overlay replacement (matches={helmet_matches})')
 
 # ---------------------------------------------------------------------------
-# Replace the procedural frog on the HOME screen with the user's new glossy
-# green frog. The gameplay frog stays unchanged unless poison immunity is on.
+# Make the rain immunity visibly animated and move it closer to the frog.
+# v6 already installs four successive rain frames; cycle them faster and add a
+# gentle vertical bob so the effect is obvious even on a small phone screen.
+# ---------------------------------------------------------------------------
+replace_once(
+    '''            while (true) {
+                delay(180)
+                rainFrame = (rainFrame + 1) % 4
+            }''',
+    '''            while (true) {
+                delay(120)
+                rainFrame = (rainFrame + 1) % 4
+            }''',
+    'rain animation timing',
+)
+
+rain_pattern = re.compile(
+    r'\n\s*if \(fireflyImmune\) \{\s*\n\s*val rainDrawable = when \(rainFrame\) \{.*?\n\s*\}\s*\n\s*Image\(\s*\n\s*painter = painterResource\(rainDrawable\),.*?\n\s*\)\s*\n\s*\}',
+    re.S,
+)
+rain_replacement = '''
+        if (fireflyImmune) {
+            val rainDrawable = when (rainFrame) {
+                1 -> R.drawable.rain_cloud_1
+                2 -> R.drawable.rain_cloud_2
+                3 -> R.drawable.rain_cloud_3
+                else -> R.drawable.rain_cloud_0
+            }
+            val rainBob = (kotlin.math.sin(buzzPhase * 1.35f) * 3.0f).dp
+            Image(
+                painter = painterResource(rainDrawable),
+                contentDescription = "Animated firefly immunity rain cloud",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = maxHeight * 0.495f + frogBob + rainBob)
+                    .width(frogWidth * 0.72f)
+            )
+        }'''
+text, rain_matches = rain_pattern.subn(rain_replacement, text, count=1)
+if rain_matches != 1:
+    raise SystemExit(f'v7 patch failed: animated rain overlay replacement (matches={rain_matches})')
+
+# ---------------------------------------------------------------------------
+# Replace the procedural frog on the HOME screen with the user's glossy green
+# frog. The gameplay frog stays unchanged unless poison immunity is on.
 # ---------------------------------------------------------------------------
 text = text.replace(
     '                drawFrog(Offset(size.width * 0.5f, size.height * 0.55f))\n',
@@ -136,6 +181,7 @@ text = text[:start] + start_block + text[end:]
 
 # ---------------------------------------------------------------------------
 # Use that same green frog as the installed Android game/launcher logo.
+# The workflow later redirects it to the validated PNG mipmap copy.
 # ---------------------------------------------------------------------------
 manifest = project_dir / 'app' / 'src' / 'main' / 'AndroidManifest.xml'
 manifest_text = manifest.read_text()
@@ -156,5 +202,13 @@ if 'android:roundIcon=' in manifest_text:
     )
 manifest.write_text(manifest_text)
 
+# Bump the app itself here. The workflow's older v0.8.6 sed replacements then
+# safely become no-ops because the base values no longer exist.
+app_gradle = project_dir / 'app' / 'build.gradle.kts'
+gradle_text = app_gradle.read_text()
+gradle_text = gradle_text.replace('versionCode = 8', 'versionCode = 16', 1)
+gradle_text = gradle_text.replace('versionName = "0.7.2"', 'versionName = "0.8.7-mask-rain"', 1)
+app_gradle.write_text(gradle_text)
+
 main_file.write_text(text)
-print('patched v0.8.5: new bee face mask, green home/logo frog, Auto-Eat removed, valid poison frog crash fix')
+print('patched v0.8.7: fitted bee face mask, lowered visibly animated rain, home/logo frog, Auto-Eat removed')
