@@ -18,14 +18,26 @@ parts = sorted(src.glob("home_safe_*.b64"))
 if not parts:
     raise SystemExit("missing safe homepage chunks")
 
-encoded = "".join(p.read_text().strip() for p in parts)
-try:
-    webp = base64.b64decode(encoded, validate=True)
-except Exception as exc:
-    raise SystemExit(f"safe homepage base64 decode failed: {exc}")
+# Each chunk is an independently padded Base64 fragment. Decode each fragment
+# first, then concatenate the resulting bytes. Concatenating the Base64 text
+# itself produces "Excess data after padding" and is intentionally rejected.
+decoded_parts = []
+for part in parts:
+    try:
+        decoded_parts.append(base64.b64decode(part.read_text().strip(), validate=True))
+    except Exception as exc:
+        raise SystemExit(f"safe homepage base64 decode failed in {part.name}: {exc}")
+webp = b"".join(decoded_parts)
 
 if len(webp) < 32 or webp[:4] != b"RIFF" or webp[8:12] != b"WEBP":
     raise SystemExit("safe homepage source is not a complete WebP")
+
+# Validate RIFF's declared container size before asking ffmpeg to decode it.
+declared_size = struct.unpack("<I", webp[4:8])[0] + 8
+if declared_size != len(webp):
+    raise SystemExit(
+        f"safe homepage WebP size mismatch: RIFF declares {declared_size}, got {len(webp)}"
+    )
 
 ffmpeg = shutil.which("ffmpeg")
 if not ffmpeg:
@@ -90,5 +102,5 @@ for generated in (destination, compat_jpeg):
 source.unlink(missing_ok=True)
 print(
     f"{destination.name}: {len(data)} bytes, {width}x{height}, "
-    f"fully decoded from {len(parts)} safe chunks"
+    f"fully decoded from {len(parts)} safe chunks ({len(webp)} WebP bytes)"
 )
