@@ -1,4 +1,5 @@
 name: Build Feed the Frog APK
+# v0.8.4 clean rebuild after repairing generated multiline patch literals
 
 on:
   workflow_dispatch:
