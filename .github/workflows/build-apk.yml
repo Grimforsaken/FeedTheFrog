@@ -1,5 +1,5 @@
 name: Build Feed the Frog APK
-# v0.8.5: bee face mask, new home/logo frog, Auto-Eat removed, poison immunity crash fix
+# v0.8.6: startup recovery - convert new frog/mask assets to PNG and use a proper mipmap launcher icon
 
 on:
   workflow_dispatch:
@@ -58,7 +58,7 @@ jobs:
         shell: bash
         run: yes | sdkmanager --licenses >/dev/null || true
 
-      - name: Install Android API 37 and Build-Tools 37
+      - name: Install Android API 37, Build-Tools 37, and PNG converter
         shell: bash
         run: |
           set -euo pipefail
@@ -69,6 +69,8 @@ jobs:
           BUILD_TOOLS="$(sdkmanager --list | awk -F'|' '/build-tools;37\./ {gsub(/[[:space:]]/, "", $1); print $1}' | sort -V | tail -n 1)"
           test -n "$BUILD_TOOLS"
           sdkmanager "$BUILD_TOOLS"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq imagemagick
 
       - name: Find and extract Feed the Frog project
         shell: bash
@@ -80,7 +82,7 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch v0.8.5 gameplay and art
+      - name: Patch v0.8.6 gameplay and startup-safe art
         shell: bash
         run: |
           set -euo pipefail
@@ -89,6 +91,8 @@ jobs:
           MAIN_FILE="$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
           APP_GRADLE="$PROJECT_DIR/app/build.gradle.kts"
           MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+          DRAWABLE_DIR="$PROJECT_DIR/app/src/main/res/drawable-nodpi"
+          MIPMAP_DIR="$PROJECT_DIR/app/src/main/res/mipmap-nodpi"
 
           if [ -f "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" ]; then
             mv "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" "$PROJECT_DIR/app/src/main/res/raw/catch_sound.ogg"
@@ -109,14 +113,33 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_compile_fix.py" "$MAIN_FILE"
 
-          # Final v0.8.5 pass runs last so no older patch can undo these changes.
+          # Keep the requested v0.8.5 feature changes.
           python3 "$GITHUB_WORKSPACE/prepare_v9_assets.py"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v7.py" "$MAIN_FILE" "$PROJECT_DIR"
 
-          sed -i 's/versionCode = 8/versionCode = 14/' "$APP_GRADLE"
-          sed -i 's/versionName = "0.7.2"/versionName = "0.8.5-mask-logo-poison-fix"/' "$APP_GRADLE"
+          # Startup recovery: Android was dying before the first Compose screen after the
+          # new WebP became both the launcher icon and the first-screen sprite. Convert the
+          # three newly supplied assets to ordinary PNGs and remove the WebP copies so the
+          # resource IDs stay the same but Android uses its most conservative bitmap path.
+          mkdir -p "$DRAWABLE_DIR" "$MIPMAP_DIR"
+          convert "$GITHUB_WORKSPACE/generated_assets_v9/ftf_home_frog.webp" "$DRAWABLE_DIR/ftf_home_frog.png"
+          convert "$GITHUB_WORKSPACE/generated_assets_v9/frog_helmet_mask.webp" "$DRAWABLE_DIR/frog_helmet.png"
+          convert "$GITHUB_WORKSPACE/generated_assets_v9/ftf_poison_frog_fixed.webp" "$DRAWABLE_DIR/ftf_poison_frog.png"
+          rm -f "$DRAWABLE_DIR/ftf_home_frog.webp" "$DRAWABLE_DIR/frog_helmet.webp" "$DRAWABLE_DIR/ftf_poison_frog.webp"
 
-          # Existing v0.8.4 feature checks.
+          # A launcher icon belongs in mipmap. Keep the home-screen sprite in drawable.
+          cp "$DRAWABLE_DIR/ftf_home_frog.png" "$MIPMAP_DIR/ftf_launcher.png"
+          sed -i 's#android:icon="@drawable/ftf_home_frog"#android:icon="@mipmap/ftf_launcher"#' "$MANIFEST"
+          sed -i 's#android:roundIcon="@drawable/ftf_home_frog"#android:roundIcon="@mipmap/ftf_launcher"#' "$MANIFEST"
+
+          # Disable any old saved Auto-Eat purchase before Compose starts.
+          # The shop card is already removed by v7; this protects upgrades from old installs.
+          grep -q 'autoEatEnabled = false' "$MAIN_FILE"
+
+          sed -i 's/versionCode = 8/versionCode = 15/' "$APP_GRADLE"
+          sed -i 's/versionName = "0.7.2"/versionName = "0.8.6-startup-fix"/' "$APP_GRADLE"
+
+          # Existing gameplay checks.
           grep -q 'BEE_IMMUNITY_COST = 1' "$MAIN_FILE"
           grep -q 'FIREFLY_IMMUNITY_COST = 1' "$MAIN_FILE"
           grep -q 'BUG_UNLOCK_COST = 1' "$MAIN_FILE"
@@ -125,20 +148,23 @@ jobs:
           grep -q 'TV: MEADOW' "$MAIN_FILE"
           grep -q 'TV: SKUNK WALK' "$MAIN_FILE"
           grep -q 'private fun UpgradeChallengeOverlayFixed' "$MAIN_FILE"
-
-          # New v0.8.5 checks.
           grep -q 'Bee immunity face mask' "$MAIN_FILE"
           grep -q 'R.drawable.ftf_home_frog' "$MAIN_FILE"
-          grep -q 'autoEatEnabled = false' "$MAIN_FILE"
           if grep -q 'title = "Auto-Eat (Mid Range)"' "$MAIN_FILE"; then
             echo 'Auto-Eat shop card still present' >&2
             exit 1
           fi
-          grep -q 'android:icon="@drawable/ftf_home_frog"' "$MANIFEST"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_home_frog.webp"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/frog_helmet.webp"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_poison_frog.webp"
-          cmp "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_poison_frog.webp" "$GITHUB_WORKSPACE/generated_assets_v9/ftf_poison_frog_fixed.webp"
+
+          # Startup-safe asset checks.
+          grep -q 'android:icon="@mipmap/ftf_launcher"' "$MANIFEST"
+          test -s "$DRAWABLE_DIR/ftf_home_frog.png"
+          test -s "$DRAWABLE_DIR/frog_helmet.png"
+          test -s "$DRAWABLE_DIR/ftf_poison_frog.png"
+          test -s "$MIPMAP_DIR/ftf_launcher.png"
+          identify "$DRAWABLE_DIR/ftf_home_frog.png"
+          identify "$DRAWABLE_DIR/frog_helmet.png"
+          identify "$DRAWABLE_DIR/ftf_poison_frog.png"
+          identify "$MIPMAP_DIR/ftf_launcher.png"
 
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_firefly.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_poison_fly.webp"
@@ -159,7 +185,7 @@ jobs:
           cd "$PROJECT_DIR"
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
 
-      - name: Verify and preserve v0.8.5 APK
+      - name: Verify and preserve v0.8.6 APK
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
@@ -169,18 +195,20 @@ jobs:
           grep -q 'res/raw/subscription_pond.webm' apk-contents.txt
           grep -q 'res/raw/subscription_meadow.mp4' apk-contents.txt
           grep -q 'res/raw/subscription_skunk.mp4' apk-contents.txt
-          grep -q 'ftf_home_frog' apk-contents.txt
-          grep -q 'frog_helmet' apk-contents.txt
-          grep -q 'ftf_poison_frog' apk-contents.txt
+          grep -q 'drawable-nodpi-v4/ftf_home_frog.png' apk-contents.txt
+          grep -q 'drawable-nodpi-v4/frog_helmet.png' apk-contents.txt
+          grep -q 'drawable-nodpi-v4/ftf_poison_frog.png' apk-contents.txt
+          grep -q 'mipmap-nodpi-v4/ftf_launcher.png' apk-contents.txt
           grep -q 'bug_firefly' apk-contents.txt
           grep -q 'bug_poison_fly' apk-contents.txt
 
-          # Prove the poison frog packaged into the APK is the corrected WebP.
-          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_poison_frog.webp' > /tmp/apk-poison-frog.webp
-          cmp /tmp/apk-poison-frog.webp "$GITHUB_WORKSPACE/generated_assets_v9/ftf_poison_frog_fixed.webp"
+          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_home_frog.png' > /tmp/apk-home-frog.png
+          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_poison_frog.png' > /tmp/apk-poison-frog.png
+          identify /tmp/apk-home-frog.png
+          identify /tmp/apk-poison-frog.png
 
-          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.5.apk
-          echo "Verified v0.8.5 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.5.apk)"
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.6.apk
+          echo "Verified v0.8.6 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.6.apk)"
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -203,8 +231,8 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-TV-v0.8.5-mask-logo-poison-fix
-          path: /tmp/FeedTheFrog-TV-v0.8.5.apk
+          name: FeedTheFrog-TV-v0.8.6-startup-fix
+          path: /tmp/FeedTheFrog-TV-v0.8.6.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -217,7 +245,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-          cp /tmp/FeedTheFrog-TV-v0.8.5.apk FeedTheFrog-latest.apk
+          cp /tmp/FeedTheFrog-TV-v0.8.6.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish FeedTheFrog v0.8.5 mask logo poison fix APK [skip ci]" || true
+          git commit -m "Publish FeedTheFrog v0.8.6 startup fix APK [skip ci]" || true
           git push origin HEAD:main
