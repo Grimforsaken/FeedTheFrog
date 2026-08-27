@@ -1,5 +1,5 @@
 name: Build Feed the Frog APK
-# v0.8.8: new full home screen, species-specific movement, and Timer Skip upgrade.
+# v0.8.9: replace the malformed v0.8.8 homepage JPEG with a fully decoded PNG.
 
 on:
   workflow_dispatch:
@@ -13,6 +13,7 @@ on:
       - "binary_assets/**"
       - "binary_assets_v9/**"
       - "binary_assets_v10/**"
+      - "binary_assets_v11/**"
       - "prepare_v8_assets.py"
       - "prepare_v9_assets.py"
       - "prepare_v10_assets.py"
@@ -20,6 +21,8 @@ on:
       - "patch_gameplay_v6.py"
       - "patch_gameplay_v7.py"
       - "patch_gameplay_v8.py"
+      - "patch_home_final.py"
+      - "patch_home_png_resource.py"
       - "patch_tv_v2.py"
       - "ui_assets/**"
       - "tv_assets/**"
@@ -84,7 +87,7 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch v0.8.8 gameplay and art
+      - name: Patch v0.8.9 gameplay and safe homepage
         shell: bash
         run: |
           set -euo pipefail
@@ -112,17 +115,22 @@ jobs:
           python3 "$GITHUB_WORKSPACE/prepare_v8_assets.py"
           python3 "$GITHUB_WORKSPACE/patch_v6_preflight.py" "$MAIN_FILE"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v6.py" "$MAIN_FILE" "$PROJECT_DIR"
+
+          # This patch installs ffmpeg/ffprobe when needed and guarantees every
+          # MP4 packaged for the TV contains a video stream and zero audio streams.
           python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_compile_fix.py" "$MAIN_FILE"
 
           python3 "$GITHUB_WORKSPACE/prepare_v9_assets.py"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v7.py" "$MAIN_FILE" "$PROJECT_DIR"
 
-          # Reconstruct and install the user's new full portrait home screen, then
-          # apply all movement profiles and the Timer Skip upgrade after v7.
+          # Reconstruct the exact approved homepage from the new safe chunks.
+          # prepare_v11 performs a real ffmpeg decode into PNG and a second full
+          # decode validation; it no longer trusts container magic bytes alone.
           python3 "$GITHUB_WORKSPACE/prepare_v11_assets.py"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v8.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_home_final.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_home_png_resource.py" "$PROJECT_DIR"
 
           # Reconstruct the validated PNG frog/mask assets used by gameplay and launcher.
           python3 "$GITHUB_WORKSPACE/prepare_v10_assets.py"
@@ -143,9 +151,9 @@ jobs:
             exit 1
           fi
 
-          # v0.8.8 code and resource checks before compilation.
-          grep -q 'versionCode = 17' "$APP_GRADLE"
-          grep -q 'versionName = "0.8.8-home-motion-timer-skip"' "$APP_GRADLE"
+          # v0.8.9 code and resource checks before compilation.
+          grep -q 'versionCode = 18' "$APP_GRADLE"
+          grep -q 'versionName = "0.8.9-valid-home-png"' "$APP_GRADLE"
           grep -q 'TIMER_SKIP_COST = 1' "$MAIN_FILE"
           grep -q 'UpgradeKind.TIMER_SKIP' "$MAIN_FILE"
           grep -q 'title = "Timer Skip"' "$MAIN_FILE"
@@ -157,7 +165,11 @@ jobs:
           grep -q 'Deliberately slow, broad loops' "$MAIN_FILE"
           grep -q 'Fast, sharp zigzags' "$MAIN_FILE"
           grep -q 'Poison bugs intentionally use the exact normal-fly motion' "$MAIN_FILE"
-          test -s "$DRAWABLE_DIR/ftf_home_screen_v2.jpg"
+          test -s "$DRAWABLE_DIR/ftf_home_screen_v2.png"
+          test ! -e "$DRAWABLE_DIR/ftf_home_screen_v2.jpg"
+
+          # A real decoder must accept the final resource before compilation.
+          ffmpeg -v error -i "$DRAWABLE_DIR/ftf_home_screen_v2.png" -f null -
 
           # Preserve all prior systems and media.
           grep -q 'BEE_IMMUNITY_COST = 1' "$MAIN_FILE"
@@ -190,16 +202,17 @@ jobs:
               Path(r'$DRAWABLE_DIR/frog_helmet.png'),
               Path(r'$DRAWABLE_DIR/ftf_poison_frog.png'),
               Path(r'$MIPMAP_DIR/ftf_launcher.png'),
+              Path(r'$DRAWABLE_DIR/ftf_home_screen_v2.png'),
           ]
           for p in pngs:
               data=p.read_bytes()
               assert data.startswith(b'\x89PNG\r\n\x1a\n'), p
+              assert data[12:16] == b'IHDR', p
               w,h=struct.unpack('>II', data[16:24])
               assert w > 0 and h > 0, p
+              if p.name == 'ftf_home_screen_v2.png':
+                  assert (w,h) == (320,569), (p,w,h)
               print(f'validated {p.name}: {len(data)} bytes {w}x{h}')
-          home = Path(r'$DRAWABLE_DIR/ftf_home_screen_v2.jpg').read_bytes()
-          assert home.startswith(b'\xff\xd8') and home.endswith(b'\xff\xd9')
-          print(f'validated ftf_home_screen_v2.jpg: {len(home)} bytes')
           PY
 
           rm -rf "$PROJECT_DIR/.gradle" "$PROJECT_DIR/app/build"
@@ -215,7 +228,7 @@ jobs:
           cd "$PROJECT_DIR"
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
 
-      - name: Verify and preserve v0.8.8 APK
+      - name: Verify and preserve v0.8.9 APK
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
@@ -226,7 +239,11 @@ jobs:
           grep -q 'res/raw/subscription_pond.webm' apk-contents.txt
           grep -q 'res/raw/subscription_meadow.mp4' apk-contents.txt
           grep -q 'res/raw/subscription_skunk.mp4' apk-contents.txt
-          grep -q 'drawable-nodpi-v4/ftf_home_screen_v2.jpg' apk-contents.txt
+          grep -q 'drawable-nodpi-v4/ftf_home_screen_v2.png' apk-contents.txt
+          if grep -q 'drawable-nodpi-v4/ftf_home_screen_v2.jpg' apk-contents.txt; then
+            echo 'Broken/obsolete homepage JPEG was packaged' >&2
+            exit 1
+          fi
           grep -q 'drawable-nodpi-v4/ftf_home_frog.png' apk-contents.txt
           grep -q 'drawable-nodpi-v4/frog_helmet.png' apk-contents.txt
           grep -q 'drawable-nodpi-v4/ftf_poison_frog.png' apk-contents.txt
@@ -234,17 +251,29 @@ jobs:
           grep -q 'bug_firefly' apk-contents.txt
           grep -q 'bug_poison_fly' apk-contents.txt
 
-          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_home_screen_v2.jpg' > /tmp/apk-home-v2.jpg
+          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_home_screen_v2.png' > /tmp/apk-home-v2.png
+          ffmpeg -v error -i /tmp/apk-home-v2.png -f null -
           python3 - <<'PY'
           from pathlib import Path
-          p = Path('/tmp/apk-home-v2.jpg')
+          import struct
+          p = Path('/tmp/apk-home-v2.png')
           data = p.read_bytes()
-          assert data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9')
-          print(f'APK home screen verified: {len(data)} bytes')
+          assert data.startswith(b'\x89PNG\r\n\x1a\n')
+          assert data[12:16] == b'IHDR'
+          w,h = struct.unpack('>II', data[16:24])
+          assert (w,h) == (320,569), (w,h)
+          print(f'APK homepage fully decoded and verified: {len(data)} bytes, {w}x{h}')
           PY
 
-          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.8.apk
-          echo "Verified v0.8.8 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.8.apk)"
+          # Verify the packaged TV MP4s are genuinely video-only.
+          for name in subscription_meadow subscription_skunk; do
+            unzip -p "$APK_FILE" "res/raw/${name}.mp4" > "/tmp/${name}.mp4"
+            test "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "/tmp/${name}.mp4" | wc -l)" -eq 0
+            test "$(ffprobe -v error -select_streams v -show_entries stream=index -of csv=p=0 "/tmp/${name}.mp4" | wc -l)" -ge 1
+          done
+
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.9.apk
+          echo "Verified v0.8.9 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.9.apk)"
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -267,8 +296,8 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-TV-v0.8.8-home-motion-timer-skip
-          path: /tmp/FeedTheFrog-TV-v0.8.8.apk
+          name: FeedTheFrog-TV-v0.8.9-valid-home-png
+          path: /tmp/FeedTheFrog-TV-v0.8.9.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -281,7 +310,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-          cp /tmp/FeedTheFrog-TV-v0.8.8.apk FeedTheFrog-latest.apk
+          cp /tmp/FeedTheFrog-TV-v0.8.9.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish FeedTheFrog v0.8.8 APK [skip ci]" || true
+          git commit -m "Publish FeedTheFrog v0.8.9 APK [skip ci]" || true
           git push origin HEAD:main
