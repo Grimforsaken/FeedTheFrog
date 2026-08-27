@@ -33,10 +33,10 @@ if not ffmpeg:
 
 source = out / "ftf_home_screen_v2_source.webp"
 destination = out / "ftf_home_screen_v2.png"
-old_jpeg = out / "ftf_home_screen_v2.jpg"
+compat_jpeg = out / "ftf_home_screen_v2.jpg"
 source.write_bytes(webp)
-old_jpeg.unlink(missing_ok=True)
 destination.unlink(missing_ok=True)
+compat_jpeg.unlink(missing_ok=True)
 
 # Decode, do not stream-copy: this proves the source pixels are readable and
 # creates an Android-friendly PNG rather than reusing the broken JPEG stream.
@@ -53,6 +53,23 @@ subprocess.run(
     check=True,
 )
 
+# patch_gameplay_v8.py predates this recovery and still checks for a .jpg.
+# Give it a freshly decoded/re-encoded JPEG only as a temporary compatibility
+# input. A later final-resource patch deletes the JPEG from Android resources
+# and installs the validated PNG instead.
+subprocess.run(
+    [
+        ffmpeg,
+        "-y",
+        "-v", "error",
+        "-i", str(source),
+        "-frames:v", "1",
+        "-q:v", "2",
+        str(compat_jpeg),
+    ],
+    check=True,
+)
+
 data = destination.read_bytes()
 if len(data) < 33 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
     raise SystemExit("decoded homepage is not a PNG")
@@ -62,12 +79,13 @@ width, height = struct.unpack(">II", data[16:24])
 if (width, height) != (320, 569):
     raise SystemExit(f"unexpected safe homepage dimensions: {width}x{height}")
 
-# Force a second, independent full decode of the resulting PNG. Marker-only
-# checks are intentionally insufficient after the malformed-JPEG incident.
-subprocess.run(
-    [ffmpeg, "-v", "error", "-i", str(destination), "-f", "null", "-"],
-    check=True,
-)
+# Force independent full decodes of both generated files. Marker-only checks
+# are intentionally insufficient after the malformed-JPEG incident.
+for generated in (destination, compat_jpeg):
+    subprocess.run(
+        [ffmpeg, "-v", "error", "-i", str(generated), "-f", "null", "-"],
+        check=True,
+    )
 
 source.unlink(missing_ok=True)
 print(
