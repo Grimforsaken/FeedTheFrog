@@ -27,9 +27,11 @@ def regex_once(pattern: str, replacement: str, label: str, flags=0) -> None:
         raise SystemExit(f'v8 patch failed: {label} (matches={count})')
 
 # ---------------------------------------------------------------------------
-# Full replacement HOME screen art. The new supplied portrait already contains
-# the frog and pond, so remove v7's extra frog sprite and place this image over
-# the old decorative home Canvas while keeping the existing interactive UI.
+# Startup-safe v0.8.8 recovery.
+# Keep the supplied full portrait home art packaged for the next conversion
+# pass, but do NOT decode it on the first Compose frame. v0.8.6 already proved
+# this device needs conservative first-screen bitmap handling. The validated
+# PNG home frog and the existing Canvas remain the first screen for now.
 # ---------------------------------------------------------------------------
 home_src = repo_root / 'generated_assets_v11' / 'ftf_home_screen_v2.jpg'
 if not home_src.exists():
@@ -38,26 +40,8 @@ drawable = project_dir / 'app' / 'src' / 'main' / 'res' / 'drawable-nodpi'
 drawable.mkdir(parents=True, exist_ok=True)
 shutil.copy2(home_src, drawable / 'ftf_home_screen_v2.jpg')
 
-old_home = '''            Image(
-                painter = painterResource(R.drawable.ftf_home_frog),
-                contentDescription = "Feed the Frog home frog",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth(0.62f)
-                    .offset(y = 24.dp)
-            )
-
-            Column('''
-new_home = '''            Image(
-                painter = painterResource(R.drawable.ftf_home_screen_v2),
-                contentDescription = "Feed the Frog pond home screen",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
-
-            Column('''
-replace_once(old_home, new_home, 'full home-screen replacement')
+# Deliberately leave v7's startup-safe R.drawable.ftf_home_frog Image intact.
+# The full-screen JPEG stays packaged but is not referenced by StartScreen.
 
 # ---------------------------------------------------------------------------
 # Distinct species movement profiles requested for v0.8.8.
@@ -300,4 +284,4 @@ gradle_text = gradle_text.replace('versionName = "0.8.7-mask-rain"', 'versionNam
 app_gradle.write_text(gradle_text)
 
 main_file.write_text(text)
-print('patched v0.8.8: full home screen, species movement profiles, and one-coin Timer Skip upgrade')
+print('patched v0.8.8 startup-safe: v7 home first frame, species movement profiles, and one-coin Timer Skip upgrade')
