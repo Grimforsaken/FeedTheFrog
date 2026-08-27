@@ -130,7 +130,13 @@ for src_name, dst_name in [
 ffmpeg = shutil.which('ffmpeg')
 ffprobe = shutil.which('ffprobe')
 if not ffmpeg or not ffprobe:
-    raise SystemExit('tv v2 patch failed: ffmpeg/ffprobe are required to enforce silent TV MP4s')
+    print('ffmpeg is not preinstalled; installing it for TV video sanitation')
+    subprocess.run(['sudo', 'apt-get', 'update', '-qq'], check=True)
+    subprocess.run(['sudo', 'apt-get', 'install', '-y', '-qq', 'ffmpeg'], check=True)
+    ffmpeg = shutil.which('ffmpeg')
+    ffprobe = shutil.which('ffprobe')
+if not ffmpeg or not ffprobe:
+    raise SystemExit('tv v2 patch failed: ffmpeg/ffprobe could not be installed')
 
 for video in sorted(raw_dir.glob('*.mp4')):
     temp = video.with_name(video.stem + '.video-only.mp4')
