@@ -1,5 +1,5 @@
 name: Build Feed the Frog APK
-# v0.8.6: startup recovery - convert new frog/mask assets to PNG and use a proper mipmap launcher icon
+# v0.8.6 startup recovery: use validated PNG frog/mask assets, not the corrupt v0.8.5 WebPs
 
 on:
   workflow_dispatch:
@@ -12,8 +12,10 @@ on:
       - "FeedTheFrog-latest.apk"
       - "binary_assets/**"
       - "binary_assets_v9/**"
+      - "binary_assets_v10/**"
       - "prepare_v8_assets.py"
       - "prepare_v9_assets.py"
+      - "prepare_v10_assets.py"
       - "patch_gameplay_v6.py"
       - "patch_gameplay_v7.py"
       - "patch_tv_v2.py"
@@ -58,7 +60,7 @@ jobs:
         shell: bash
         run: yes | sdkmanager --licenses >/dev/null || true
 
-      - name: Install Android API 37, Build-Tools 37, and PNG converter
+      - name: Install Android API 37 and Build-Tools 37
         shell: bash
         run: |
           set -euo pipefail
@@ -69,8 +71,6 @@ jobs:
           BUILD_TOOLS="$(sdkmanager --list | awk -F'|' '/build-tools;37\./ {gsub(/[[:space:]]/, "", $1); print $1}' | sort -V | tail -n 1)"
           test -n "$BUILD_TOOLS"
           sdkmanager "$BUILD_TOOLS"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq imagemagick
 
       - name: Find and extract Feed the Frog project
         shell: bash
@@ -82,7 +82,7 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch v0.8.6 gameplay and startup-safe art
+      - name: Patch v0.8.6 gameplay and validated startup art
         shell: bash
         run: |
           set -euo pipefail
@@ -113,28 +113,32 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_compile_fix.py" "$MAIN_FILE"
 
-          # Keep the requested v0.8.5 feature changes.
+          # Keep all requested v0.8.5 gameplay/UI changes: new mask placement,
+          # green home frog, and Auto-Eat removal. v7 still references the same
+          # resource names; the broken WebPs it copies are replaced below.
           python3 "$GITHUB_WORKSPACE/prepare_v9_assets.py"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v7.py" "$MAIN_FILE" "$PROJECT_DIR"
 
-          # Startup recovery: Android was dying before the first Compose screen after the
-          # new WebP became both the launcher icon and the first-screen sprite. Convert the
-          # three newly supplied assets to ordinary PNGs and remove the WebP copies so the
-          # resource IDs stay the same but Android uses its most conservative bitmap path.
+          # Reconstruct fresh PNGs made from the user's original images.
+          # prepare_v10 validates PNG signatures and every PNG chunk CRC.
+          python3 "$GITHUB_WORKSPACE/prepare_v10_assets.py"
           mkdir -p "$DRAWABLE_DIR" "$MIPMAP_DIR"
-          convert "$GITHUB_WORKSPACE/generated_assets_v9/ftf_home_frog.webp" "$DRAWABLE_DIR/ftf_home_frog.png"
-          convert "$GITHUB_WORKSPACE/generated_assets_v9/frog_helmet_mask.webp" "$DRAWABLE_DIR/frog_helmet.png"
-          convert "$GITHUB_WORKSPACE/generated_assets_v9/ftf_poison_frog_fixed.webp" "$DRAWABLE_DIR/ftf_poison_frog.png"
+          cp "$GITHUB_WORKSPACE/generated_assets_v10/ftf_home_frog.png" "$DRAWABLE_DIR/ftf_home_frog.png"
+          cp "$GITHUB_WORKSPACE/generated_assets_v10/frog_helmet.png" "$DRAWABLE_DIR/frog_helmet.png"
+          cp "$GITHUB_WORKSPACE/generated_assets_v10/ftf_poison_frog.png" "$DRAWABLE_DIR/ftf_poison_frog.png"
           rm -f "$DRAWABLE_DIR/ftf_home_frog.webp" "$DRAWABLE_DIR/frog_helmet.webp" "$DRAWABLE_DIR/ftf_poison_frog.webp"
 
-          # A launcher icon belongs in mipmap. Keep the home-screen sprite in drawable.
+          # Use a dedicated launcher resource rather than a Compose drawable WebP.
           cp "$DRAWABLE_DIR/ftf_home_frog.png" "$MIPMAP_DIR/ftf_launcher.png"
           sed -i 's#android:icon="@drawable/ftf_home_frog"#android:icon="@mipmap/ftf_launcher"#' "$MANIFEST"
           sed -i 's#android:roundIcon="@drawable/ftf_home_frog"#android:roundIcon="@mipmap/ftf_launcher"#' "$MANIFEST"
 
-          # Disable any old saved Auto-Eat purchase before Compose starts.
-          # The shop card is already removed by v7; this protects upgrades from old installs.
+          # Auto-Eat must remain removed, including for old saved games.
           grep -q 'autoEatEnabled = false' "$MAIN_FILE"
+          if grep -q 'title = "Auto-Eat (Mid Range)"' "$MAIN_FILE"; then
+            echo 'Auto-Eat shop card still present' >&2
+            exit 1
+          fi
 
           sed -i 's/versionCode = 8/versionCode = 15/' "$APP_GRADLE"
           sed -i 's/versionName = "0.7.2"/versionName = "0.8.6-startup-fix"/' "$APP_GRADLE"
@@ -150,21 +154,29 @@ jobs:
           grep -q 'private fun UpgradeChallengeOverlayFixed' "$MAIN_FILE"
           grep -q 'Bee immunity face mask' "$MAIN_FILE"
           grep -q 'R.drawable.ftf_home_frog' "$MAIN_FILE"
-          if grep -q 'title = "Auto-Eat (Mid Range)"' "$MAIN_FILE"; then
-            echo 'Auto-Eat shop card still present' >&2
-            exit 1
-          fi
 
-          # Startup-safe asset checks.
+          # Startup resource checks before compilation.
           grep -q 'android:icon="@mipmap/ftf_launcher"' "$MANIFEST"
           test -s "$DRAWABLE_DIR/ftf_home_frog.png"
           test -s "$DRAWABLE_DIR/frog_helmet.png"
           test -s "$DRAWABLE_DIR/ftf_poison_frog.png"
           test -s "$MIPMAP_DIR/ftf_launcher.png"
-          identify "$DRAWABLE_DIR/ftf_home_frog.png"
-          identify "$DRAWABLE_DIR/frog_helmet.png"
-          identify "$DRAWABLE_DIR/ftf_poison_frog.png"
-          identify "$MIPMAP_DIR/ftf_launcher.png"
+          python3 - <<PY
+          from pathlib import Path
+          import struct, zlib
+          files = [
+              Path(r'$DRAWABLE_DIR/ftf_home_frog.png'),
+              Path(r'$DRAWABLE_DIR/frog_helmet.png'),
+              Path(r'$DRAWABLE_DIR/ftf_poison_frog.png'),
+              Path(r'$MIPMAP_DIR/ftf_launcher.png'),
+          ]
+          for p in files:
+              data=p.read_bytes()
+              assert data.startswith(b'\x89PNG\r\n\x1a\n'), p
+              w,h=struct.unpack('>II', data[16:24])
+              assert w > 0 and h > 0, p
+              print(f'validated {p.name}: {len(data)} bytes {w}x{h}')
+          PY
 
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_firefly.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_poison_fly.webp"
@@ -203,9 +215,17 @@ jobs:
           grep -q 'bug_poison_fly' apk-contents.txt
 
           unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_home_frog.png' > /tmp/apk-home-frog.png
+          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/frog_helmet.png' > /tmp/apk-helmet.png
           unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_poison_frog.png' > /tmp/apk-poison-frog.png
-          identify /tmp/apk-home-frog.png
-          identify /tmp/apk-poison-frog.png
+          python3 - <<'PY'
+          from pathlib import Path
+          import struct
+          for p in map(Path, ['/tmp/apk-home-frog.png','/tmp/apk-helmet.png','/tmp/apk-poison-frog.png']):
+              data=p.read_bytes()
+              assert data.startswith(b'\x89PNG\r\n\x1a\n'), p
+              w,h=struct.unpack('>II', data[16:24])
+              print(f'APK PNG verified {p.name}: {len(data)} bytes {w}x{h}')
+          PY
 
           cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.6.apk
           echo "Verified v0.8.6 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.6.apk)"
