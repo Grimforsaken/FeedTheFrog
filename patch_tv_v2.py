@@ -1,36 +1,61 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re, shutil, sys
+import re
+import shutil
+import subprocess
+import sys
 
 if len(sys.argv) != 3:
     raise SystemExit('usage: patch_tv_v2.py <MainActivity.kt> <project_dir>')
-main_file = Path(sys.argv[1]); project_dir = Path(sys.argv[2]); root = Path(__file__).resolve().parent
+
+main_file = Path(sys.argv[1])
+project_dir = Path(sys.argv[2])
+root = Path(__file__).resolve().parent
 text = main_file.read_text()
 
-def once(old,new,label):
-    global text
-    if old not in text: raise SystemExit(f'tv v2 patch failed: {label}')
-    text = text.replace(old,new,1)
 
-once('private const val TV_MODE_POND_LIFE = 1', 'private const val TV_MODE_POND_LIFE = 1\nprivate const val TV_MODE_MEADOW = 2\nprivate const val TV_MODE_SKUNK = 3', 'TV mode constants')
-once('prefs.getInt("tvMode", TV_MODE_COMMERCIAL).coerceIn(TV_MODE_COMMERCIAL, TV_MODE_POND_LIFE)', 'prefs.getInt("tvMode", TV_MODE_COMMERCIAL).coerceIn(TV_MODE_COMMERCIAL, TV_MODE_SKUNK)', 'saved TV range')
-once('onSelectTvMode(if (tvMode == TV_MODE_COMMERCIAL) TV_MODE_POND_LIFE else TV_MODE_COMMERCIAL)', '''onSelectTvMode(
+def once(old, new, label):
+    global text
+    if old not in text:
+        raise SystemExit(f'tv v2 patch failed: {label}')
+    text = text.replace(old, new, 1)
+
+
+once(
+    'private const val TV_MODE_POND_LIFE = 1',
+    'private const val TV_MODE_POND_LIFE = 1\nprivate const val TV_MODE_MEADOW = 2\nprivate const val TV_MODE_SKUNK = 3',
+    'TV mode constants',
+)
+once(
+    'prefs.getInt("tvMode", TV_MODE_COMMERCIAL).coerceIn(TV_MODE_COMMERCIAL, TV_MODE_POND_LIFE)',
+    'prefs.getInt("tvMode", TV_MODE_COMMERCIAL).coerceIn(TV_MODE_COMMERCIAL, TV_MODE_SKUNK)',
+    'saved TV range',
+)
+once(
+    'onSelectTvMode(if (tvMode == TV_MODE_COMMERCIAL) TV_MODE_POND_LIFE else TV_MODE_COMMERCIAL)',
+    '''onSelectTvMode(
                             when (tvMode) {
                                 TV_MODE_COMMERCIAL -> TV_MODE_POND_LIFE
                                 TV_MODE_POND_LIFE -> TV_MODE_MEADOW
                                 TV_MODE_MEADOW -> TV_MODE_SKUNK
                                 else -> TV_MODE_COMMERCIAL
                             }
-                        )''', 'TV selector cycle')
-once('''if (!subscriptionPurchased) "SUBSCRIPTION SERVICE"
+                        )''',
+    'TV selector cycle',
+)
+once(
+    '''if (!subscriptionPurchased) "SUBSCRIPTION SERVICE"
                     else if (tvMode == TV_MODE_POND_LIFE) "TV: POND LIFE • 1/3"
-                    else "TV: COMMERCIAL BREAK"''', '''if (!subscriptionPurchased) "SUBSCRIPTION SERVICE"
+                    else "TV: COMMERCIAL BREAK"''',
+    '''if (!subscriptionPurchased) "SUBSCRIPTION SERVICE"
                     else when (tvMode) {
                         TV_MODE_POND_LIFE -> "TV: POND LIFE • 1/3"
                         TV_MODE_MEADOW -> "TV: MEADOW • 2/3"
                         TV_MODE_SKUNK -> "TV: SKUNK WALK • 3/3"
                         else -> "TV: COMMERCIAL BREAK"
-                    }''', 'TV selector labels')
+                    }''',
+    'TV selector labels',
+)
 
 pat = re.compile(r'@Composable\nprivate fun TvScreenLayer\(.*?\n\}\n\nprivate fun DrawScope\.drawPondBackground\(\)', re.S)
 replacement = r'''@Composable
@@ -85,12 +110,66 @@ private fun TvScreenLayer(
 
 private fun DrawScope.drawPondBackground()'''
 text, n = pat.subn(replacement, text, count=1)
-if n != 1: raise SystemExit('tv v2 patch failed: TvScreenLayer block')
+if n != 1:
+    raise SystemExit('tv v2 patch failed: TvScreenLayer block')
 
-raw_dir = project_dir / 'app' / 'src' / 'main' / 'res' / 'raw'; raw_dir.mkdir(parents=True, exist_ok=True)
-for src_name, dst_name in [('subscription_2.mp4','subscription_meadow.mp4'), ('subscription_3.mp4','subscription_skunk.mp4')]:
+raw_dir = project_dir / 'app' / 'src' / 'main' / 'res' / 'raw'
+raw_dir.mkdir(parents=True, exist_ok=True)
+for src_name, dst_name in [
+    ('subscription_2.mp4', 'subscription_meadow.mp4'),
+    ('subscription_3.mp4', 'subscription_skunk.mp4'),
+]:
     src = root / 'tv_assets' / src_name
-    if not src.exists(): raise SystemExit(f'missing TV video asset: {src}')
+    if not src.exists():
+        raise SystemExit(f'missing TV video asset: {src}')
     shutil.copy2(src, raw_dir / dst_name)
+
+# Every MP4 used inside the TV must be physically video-only, not merely muted
+# at playback. Stream-copying keeps the picture unchanged while -an removes any
+# audio stream and therefore removes its bytes from the packaged APK.
+ffmpeg = shutil.which('ffmpeg')
+ffprobe = shutil.which('ffprobe')
+if not ffmpeg or not ffprobe:
+    raise SystemExit('tv v2 patch failed: ffmpeg/ffprobe are required to enforce silent TV MP4s')
+
+for video in sorted(raw_dir.glob('*.mp4')):
+    temp = video.with_name(video.stem + '.video-only.mp4')
+    before = video.stat().st_size
+    subprocess.run(
+        [
+            ffmpeg,
+            '-y',
+            '-v', 'error',
+            '-i', str(video),
+            '-map', '0:v:0',
+            '-c:v', 'copy',
+            '-an',
+            '-map_metadata', '-1',
+            '-movflags', '+faststart',
+            str(temp),
+        ],
+        check=True,
+    )
+    temp.replace(video)
+
+    probe = subprocess.run(
+        [
+            ffprobe,
+            '-v', 'error',
+            '-select_streams', 'a',
+            '-show_entries', 'stream=index',
+            '-of', 'csv=p=0',
+            str(video),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if probe.stdout.strip():
+        raise SystemExit(f'tv v2 patch failed: audio stream remains in {video.name}')
+
+    after = video.stat().st_size
+    print(f'video-only TV asset {video.name}: {before} -> {after} bytes')
+
 main_file.write_text(text)
-print('added subscription videos 2/3 and four-state TV selector')
+print('added subscription videos 2/3, four-state TV selector, and enforced video-only MP4 assets')
