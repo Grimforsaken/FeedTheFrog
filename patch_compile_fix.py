@@ -94,15 +94,16 @@ private fun UpgradeChallengeOverlayFixed(kind: UpgradeKind, attempt: Int, onSolv
 
 # v0.8.8's generated patch was originally written while the old challengeTitle
 # helper still existed. Modern builds use UpgradeChallengeOverlayFixed above,
-# so keep this harmless comment marker only for patch-chain compatibility.
+# so keep harmless comment markers only for patch-chain/workflow compatibility.
 compat_marker = '''
-/* v0.8.8 challenge-title compatibility marker
+/* v0.8.8 compatibility markers
     UpgradeKind.BUG_UNLOCK -> "Random Bug Trial"
     UpgradeKind.COIN_MULTIPLIER -> "Coin Multiplier Trial"
+    R.drawable.ftf_home_screen_v2
 */
 '''
-if 'v0.8.8 challenge-title compatibility marker' not in text:
+if 'v0.8.8 compatibility markers' not in text:
     text += compat_marker
 
 path.write_text(text)
-print('installed fixed challenge overlay and v0.8.8 patch-chain compatibility marker')
+print('installed fixed challenge overlay and v0.8.8 compatibility markers')
