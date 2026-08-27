@@ -1,5 +1,5 @@
 name: Build Feed the Frog APK
-# v0.8.4 clean rebuild with final Kotlin compile repair
+# v0.8.5: bee face mask, new home/logo frog, Auto-Eat removed, poison immunity crash fix
 
 on:
   workflow_dispatch:
@@ -80,7 +80,7 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch v0.8.4 gameplay, art, immunities, and all 3 TV videos
+      - name: Patch v0.8.5 gameplay and art
         shell: bash
         run: |
           set -euo pipefail
@@ -88,6 +88,7 @@ jobs:
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
           MAIN_FILE="$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
           APP_GRADLE="$PROJECT_DIR/app/build.gradle.kts"
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
 
           if [ -f "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" ]; then
             mv "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" "$PROJECT_DIR/app/src/main/res/raw/catch_sound.ogg"
@@ -108,9 +109,14 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_compile_fix.py" "$MAIN_FILE"
 
-          sed -i 's/versionCode = 8/versionCode = 13/' "$APP_GRADLE"
-          sed -i 's/versionName = "0.7.2"/versionName = "0.8.4-dev-bugs-tv3"/' "$APP_GRADLE"
+          # Final v0.8.5 pass runs last so no older patch can undo these changes.
+          python3 "$GITHUB_WORKSPACE/prepare_v9_assets.py"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v7.py" "$MAIN_FILE" "$PROJECT_DIR"
 
+          sed -i 's/versionCode = 8/versionCode = 14/' "$APP_GRADLE"
+          sed -i 's/versionName = "0.7.2"/versionName = "0.8.5-mask-logo-poison-fix"/' "$APP_GRADLE"
+
+          # Existing v0.8.4 feature checks.
           grep -q 'BEE_IMMUNITY_COST = 1' "$MAIN_FILE"
           grep -q 'FIREFLY_IMMUNITY_COST = 1' "$MAIN_FILE"
           grep -q 'BUG_UNLOCK_COST = 1' "$MAIN_FILE"
@@ -119,7 +125,21 @@ jobs:
           grep -q 'TV: MEADOW' "$MAIN_FILE"
           grep -q 'TV: SKUNK WALK' "$MAIN_FILE"
           grep -q 'private fun UpgradeChallengeOverlayFixed' "$MAIN_FILE"
+
+          # New v0.8.5 checks.
+          grep -q 'Bee immunity face mask' "$MAIN_FILE"
+          grep -q 'R.drawable.ftf_home_frog' "$MAIN_FILE"
+          grep -q 'autoEatEnabled = false' "$MAIN_FILE"
+          if grep -q 'title = "Auto-Eat (Mid Range)"' "$MAIN_FILE"; then
+            echo 'Auto-Eat shop card still present' >&2
+            exit 1
+          fi
+          grep -q 'android:icon="@drawable/ftf_home_frog"' "$MANIFEST"
+          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_home_frog.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/frog_helmet.webp"
+          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_poison_frog.webp"
+          cmp "$PROJECT_DIR/app/src/main/res/drawable-nodpi/ftf_poison_frog.webp" "$GITHUB_WORKSPACE/generated_assets_v9/ftf_poison_frog_fixed.webp"
+
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_firefly.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_poison_fly.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/rain_cloud_0.webp"
@@ -139,7 +159,7 @@ jobs:
           cd "$PROJECT_DIR"
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
 
-      - name: Verify and preserve v0.8.4 APK
+      - name: Verify and preserve v0.8.5 APK
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
@@ -149,11 +169,18 @@ jobs:
           grep -q 'res/raw/subscription_pond.webm' apk-contents.txt
           grep -q 'res/raw/subscription_meadow.mp4' apk-contents.txt
           grep -q 'res/raw/subscription_skunk.mp4' apk-contents.txt
+          grep -q 'ftf_home_frog' apk-contents.txt
           grep -q 'frog_helmet' apk-contents.txt
+          grep -q 'ftf_poison_frog' apk-contents.txt
           grep -q 'bug_firefly' apk-contents.txt
           grep -q 'bug_poison_fly' apk-contents.txt
-          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.4.apk
-          echo "Verified v0.8.4 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.4.apk)"
+
+          # Prove the poison frog packaged into the APK is the corrected WebP.
+          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_poison_frog.webp' > /tmp/apk-poison-frog.webp
+          cmp /tmp/apk-poison-frog.webp "$GITHUB_WORKSPACE/generated_assets_v9/ftf_poison_frog_fixed.webp"
+
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.5.apk
+          echo "Verified v0.8.5 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.5.apk)"
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -163,6 +190,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add build-error.log
           git commit -m "Save latest Android build error [skip ci]" || true
+          git fetch origin main
+          git rebase origin/main || true
           git push origin HEAD:main || true
 
       - name: Stop after failed build
@@ -174,8 +203,8 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-TV-v0.8.4-dev-bugs-tv3
-          path: /tmp/FeedTheFrog-TV-v0.8.4.apk
+          name: FeedTheFrog-TV-v0.8.5-mask-logo-poison-fix
+          path: /tmp/FeedTheFrog-TV-v0.8.5.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -188,7 +217,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-          cp /tmp/FeedTheFrog-TV-v0.8.4.apk FeedTheFrog-latest.apk
+          cp /tmp/FeedTheFrog-TV-v0.8.5.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish FeedTheFrog v0.8.4 bugs and 3 TV videos APK [skip ci]" || true
+          git commit -m "Publish FeedTheFrog v0.8.5 mask logo poison fix APK [skip ci]" || true
           git push origin HEAD:main
