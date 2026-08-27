@@ -1,5 +1,5 @@
 name: Build Feed the Frog APK
-# v0.8.6 startup recovery: use validated PNG frog/mask assets, not the corrupt v0.8.5 WebPs
+# v0.8.8: new full home screen, species-specific movement, and Timer Skip upgrade.
 
 on:
   workflow_dispatch:
@@ -16,8 +16,10 @@ on:
       - "prepare_v8_assets.py"
       - "prepare_v9_assets.py"
       - "prepare_v10_assets.py"
+      - "prepare_v11_assets.py"
       - "patch_gameplay_v6.py"
       - "patch_gameplay_v7.py"
+      - "patch_gameplay_v8.py"
       - "patch_tv_v2.py"
       - "ui_assets/**"
       - "tv_assets/**"
@@ -82,7 +84,7 @@ jobs:
           mkdir -p extracted
           unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Patch v0.8.6 gameplay and validated startup art
+      - name: Patch v0.8.8 gameplay and art
         shell: bash
         run: |
           set -euo pipefail
@@ -113,14 +115,15 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_compile_fix.py" "$MAIN_FILE"
 
-          # Keep all requested v0.8.5 gameplay/UI changes: new mask placement,
-          # green home frog, and Auto-Eat removal. v7 still references the same
-          # resource names; the broken WebPs it copies are replaced below.
           python3 "$GITHUB_WORKSPACE/prepare_v9_assets.py"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v7.py" "$MAIN_FILE" "$PROJECT_DIR"
 
-          # Reconstruct fresh PNGs made from the user's original images.
-          # prepare_v10 validates PNG signatures and every PNG chunk CRC.
+          # Reconstruct and install the user's new full portrait home screen, then
+          # apply all movement profiles and the Timer Skip upgrade after v7.
+          python3 "$GITHUB_WORKSPACE/prepare_v11_assets.py"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v8.py" "$MAIN_FILE" "$PROJECT_DIR"
+
+          # Reconstruct the validated PNG frog/mask assets used by gameplay and launcher.
           python3 "$GITHUB_WORKSPACE/prepare_v10_assets.py"
           mkdir -p "$DRAWABLE_DIR" "$MIPMAP_DIR"
           cp "$GITHUB_WORKSPACE/generated_assets_v10/ftf_home_frog.png" "$DRAWABLE_DIR/ftf_home_frog.png"
@@ -128,22 +131,33 @@ jobs:
           cp "$GITHUB_WORKSPACE/generated_assets_v10/ftf_poison_frog.png" "$DRAWABLE_DIR/ftf_poison_frog.png"
           rm -f "$DRAWABLE_DIR/ftf_home_frog.webp" "$DRAWABLE_DIR/frog_helmet.webp" "$DRAWABLE_DIR/ftf_poison_frog.webp"
 
-          # Use a dedicated launcher resource rather than a Compose drawable WebP.
           cp "$DRAWABLE_DIR/ftf_home_frog.png" "$MIPMAP_DIR/ftf_launcher.png"
           sed -i 's#android:icon="@drawable/ftf_home_frog"#android:icon="@mipmap/ftf_launcher"#' "$MANIFEST"
           sed -i 's#android:roundIcon="@drawable/ftf_home_frog"#android:roundIcon="@mipmap/ftf_launcher"#' "$MANIFEST"
 
-          # Auto-Eat must remain removed, including for old saved games.
+          # Auto-Eat remains removed.
           grep -q 'autoEatEnabled = false' "$MAIN_FILE"
           if grep -q 'title = "Auto-Eat (Mid Range)"' "$MAIN_FILE"; then
             echo 'Auto-Eat shop card still present' >&2
             exit 1
           fi
 
-          sed -i 's/versionCode = 8/versionCode = 15/' "$APP_GRADLE"
-          sed -i 's/versionName = "0.7.2"/versionName = "0.8.6-startup-fix"/' "$APP_GRADLE"
+          # v0.8.8 code and resource checks before compilation.
+          grep -q 'versionCode = 17' "$APP_GRADLE"
+          grep -q 'versionName = "0.8.8-home-motion-timer-skip"' "$APP_GRADLE"
+          grep -q 'TIMER_SKIP_COST = 1' "$MAIN_FILE"
+          grep -q 'UpgradeKind.TIMER_SKIP' "$MAIN_FILE"
+          grep -q 'title = "Timer Skip"' "$MAIN_FILE"
+          grep -q 'R.drawable.ftf_home_screen_v2' "$MAIN_FILE"
+          grep -q 'Fast, long, hard-to-predict darts' "$MAIN_FILE"
+          grep -q 'Hummingbird-like micro-darts' "$MAIN_FILE"
+          grep -q 'Quick looping arcs' "$MAIN_FILE"
+          grep -q 'Deliberately slow, broad loops' "$MAIN_FILE"
+          grep -q 'Fast, sharp zigzags' "$MAIN_FILE"
+          grep -q 'Poison bugs intentionally use the exact normal-fly motion' "$MAIN_FILE"
+          test -s "$DRAWABLE_DIR/ftf_home_screen_v2.jpg"
 
-          # Existing gameplay checks.
+          # Preserve all prior systems and media.
           grep -q 'BEE_IMMUNITY_COST = 1' "$MAIN_FILE"
           grep -q 'FIREFLY_IMMUNITY_COST = 1' "$MAIN_FILE"
           grep -q 'BUG_UNLOCK_COST = 1' "$MAIN_FILE"
@@ -153,37 +167,39 @@ jobs:
           grep -q 'TV: SKUNK WALK' "$MAIN_FILE"
           grep -q 'private fun UpgradeChallengeOverlayFixed' "$MAIN_FILE"
           grep -q 'Bee immunity face mask' "$MAIN_FILE"
-          grep -q 'R.drawable.ftf_home_frog' "$MAIN_FILE"
-
-          # Startup resource checks before compilation.
           grep -q 'android:icon="@mipmap/ftf_launcher"' "$MANIFEST"
+
           test -s "$DRAWABLE_DIR/ftf_home_frog.png"
           test -s "$DRAWABLE_DIR/frog_helmet.png"
           test -s "$DRAWABLE_DIR/ftf_poison_frog.png"
           test -s "$MIPMAP_DIR/ftf_launcher.png"
+          test -s "$DRAWABLE_DIR/bug_firefly.webp"
+          test -s "$DRAWABLE_DIR/bug_poison_fly.webp"
+          test -s "$DRAWABLE_DIR/rain_cloud_0.webp"
+          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm"
+          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_meadow.mp4"
+          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_skunk.mp4"
+
           python3 - <<PY
           from pathlib import Path
-          import struct, zlib
-          files = [
+          import struct
+          pngs = [
               Path(r'$DRAWABLE_DIR/ftf_home_frog.png'),
               Path(r'$DRAWABLE_DIR/frog_helmet.png'),
               Path(r'$DRAWABLE_DIR/ftf_poison_frog.png'),
               Path(r'$MIPMAP_DIR/ftf_launcher.png'),
           ]
-          for p in files:
+          for p in pngs:
               data=p.read_bytes()
               assert data.startswith(b'\x89PNG\r\n\x1a\n'), p
               w,h=struct.unpack('>II', data[16:24])
               assert w > 0 and h > 0, p
               print(f'validated {p.name}: {len(data)} bytes {w}x{h}')
+          home = Path(r'$DRAWABLE_DIR/ftf_home_screen_v2.jpg').read_bytes()
+          assert home.startswith(b'\xff\xd8') and home.endswith(b'\xff\xd9')
+          print(f'validated ftf_home_screen_v2.jpg: {len(home)} bytes')
           PY
 
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_firefly.webp"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_poison_fly.webp"
-          test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/rain_cloud_0.webp"
-          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_pond.webm"
-          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_meadow.mp4"
-          test -s "$PROJECT_DIR/app/src/main/res/raw/subscription_skunk.mp4"
           rm -rf "$PROJECT_DIR/.gradle" "$PROJECT_DIR/app/build"
 
       - name: Build APK from clean source
@@ -197,16 +213,18 @@ jobs:
           cd "$PROJECT_DIR"
           gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error.log"
 
-      - name: Verify and preserve v0.8.6 APK
+      - name: Verify and preserve v0.8.8 APK
         if: steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
           APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
+          test -s "$APK_FILE"
           unzip -l "$APK_FILE" > apk-contents.txt
           grep -q 'res/raw/subscription_pond.webm' apk-contents.txt
           grep -q 'res/raw/subscription_meadow.mp4' apk-contents.txt
           grep -q 'res/raw/subscription_skunk.mp4' apk-contents.txt
+          grep -q 'drawable-nodpi-v4/ftf_home_screen_v2.jpg' apk-contents.txt
           grep -q 'drawable-nodpi-v4/ftf_home_frog.png' apk-contents.txt
           grep -q 'drawable-nodpi-v4/frog_helmet.png' apk-contents.txt
           grep -q 'drawable-nodpi-v4/ftf_poison_frog.png' apk-contents.txt
@@ -214,21 +232,17 @@ jobs:
           grep -q 'bug_firefly' apk-contents.txt
           grep -q 'bug_poison_fly' apk-contents.txt
 
-          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_home_frog.png' > /tmp/apk-home-frog.png
-          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/frog_helmet.png' > /tmp/apk-helmet.png
-          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_poison_frog.png' > /tmp/apk-poison-frog.png
+          unzip -p "$APK_FILE" 'res/drawable-nodpi-v4/ftf_home_screen_v2.jpg' > /tmp/apk-home-v2.jpg
           python3 - <<'PY'
           from pathlib import Path
-          import struct
-          for p in map(Path, ['/tmp/apk-home-frog.png','/tmp/apk-helmet.png','/tmp/apk-poison-frog.png']):
-              data=p.read_bytes()
-              assert data.startswith(b'\x89PNG\r\n\x1a\n'), p
-              w,h=struct.unpack('>II', data[16:24])
-              print(f'APK PNG verified {p.name}: {len(data)} bytes {w}x{h}')
+          p = Path('/tmp/apk-home-v2.jpg')
+          data = p.read_bytes()
+          assert data.startswith(b'\xff\xd8') and data.endswith(b'\xff\xd9')
+          print(f'APK home screen verified: {len(data)} bytes')
           PY
 
-          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.6.apk
-          echo "Verified v0.8.6 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.6.apk)"
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.8.8.apk
+          echo "Verified v0.8.8 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.8.8.apk)"
 
       - name: Save failure log to repository
         if: steps.build.outcome == 'failure'
@@ -251,8 +265,8 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-TV-v0.8.6-startup-fix
-          path: /tmp/FeedTheFrog-TV-v0.8.6.apk
+          name: FeedTheFrog-TV-v0.8.8-home-motion-timer-skip
+          path: /tmp/FeedTheFrog-TV-v0.8.8.apk
           if-no-files-found: error
           retention-days: 30
 
@@ -265,7 +279,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch origin main
           git reset --hard origin/main
-          cp /tmp/FeedTheFrog-TV-v0.8.6.apk FeedTheFrog-latest.apk
+          cp /tmp/FeedTheFrog-TV-v0.8.8.apk FeedTheFrog-latest.apk
           git add -f FeedTheFrog-latest.apk
-          git commit -m "Publish FeedTheFrog v0.8.6 startup fix APK [skip ci]" || true
+          git commit -m "Publish FeedTheFrog v0.8.8 APK [skip ci]" || true
           git push origin HEAD:main
