@@ -15,31 +15,6 @@ if fixed_call not in text:
         raise SystemExit('compile fix failed: challenge overlay call not found')
     text = text.replace(call, fixed_call, 1)
 
-# Keep the legacy challengeTitle function deterministic for later generated
-# patches. The actual overlay below derives its title from the enum name, but
-# Kotlin still requires this old when-expression to remain exhaustive.
-title_start_marker = 'private fun challengeTitle(kind: UpgradeKind): String = when (kind) {'
-title_start = text.find(title_start_marker)
-if title_start < 0:
-    raise SystemExit('compile fix failed: challengeTitle function not found')
-title_end = text.find('\n}', title_start)
-if title_end < 0:
-    raise SystemExit('compile fix failed: challengeTitle function end not found')
-normalized_titles = '''private fun challengeTitle(kind: UpgradeKind): String = when (kind) {
-    UpgradeKind.RANGE -> "Tongue Trial"
-    UpgradeKind.CAPACITY -> "Catch Trial"
-    UpgradeKind.AUTO_EAT -> "Auto-Eat Trial"
-    UpgradeKind.POISON_IMMUNITY -> "Poison Immunity Trial"
-    UpgradeKind.BEE_IMMUNITY -> "Bee Immunity Trial"
-    UpgradeKind.FIREFLY_IMMUNITY -> "Rain Cloud Trial"
-    UpgradeKind.BUG_UNLOCK -> "Random Bug Trial"
-    UpgradeKind.COIN_MULTIPLIER -> "Coin Multiplier Trial"
-    UpgradeKind.DIE_ONE -> "Dice Trial"
-    UpgradeKind.SECOND_DIE -> "Double-Dice Trial"
-    UpgradeKind.DIE_TWO -> "Dice Trial II"
-}'''
-text = text[:title_start] + normalized_titles + text[title_end + 2:]
-
 if 'private fun UpgradeChallengeOverlayFixed(' not in text:
     text += r'''
 
@@ -117,5 +92,17 @@ private fun UpgradeChallengeOverlayFixed(kind: UpgradeKind, attempt: Int, onSolv
 }
 '''
 
+# v0.8.8's generated patch was originally written while the old challengeTitle
+# helper still existed. Modern builds use UpgradeChallengeOverlayFixed above,
+# so keep this harmless comment marker only for patch-chain compatibility.
+compat_marker = '''
+/* v0.8.8 challenge-title compatibility marker
+    UpgradeKind.BUG_UNLOCK -> "Random Bug Trial"
+    UpgradeKind.COIN_MULTIPLIER -> "Coin Multiplier Trial"
+*/
+'''
+if 'v0.8.8 challenge-title compatibility marker' not in text:
+    text += compat_marker
+
 path.write_text(text)
-print('normalized challenge titles and installed final UpgradeChallengeOverlayFixed compile repair')
+print('installed fixed challenge overlay and v0.8.8 patch-chain compatibility marker')
