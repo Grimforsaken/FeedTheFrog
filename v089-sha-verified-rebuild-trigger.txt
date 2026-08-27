@@ -1,0 +1,1 @@
+Trigger v0.8.9 rebuild with exact chunk-size, RIFF, SHA-256, and full image decode validation.
