@@ -1,5 +1,5 @@
 name: Build Feed the Frog APK
-# v0.8.4 clean rebuild after repairing generated multiline patch literals
+# v0.8.4 clean rebuild with final Kotlin compile repair
 
 on:
   workflow_dispatch:
@@ -103,6 +103,7 @@ jobs:
           python3 "$GITHUB_WORKSPACE/patch_v6_preflight.py" "$MAIN_FILE"
           python3 "$GITHUB_WORKSPACE/patch_gameplay_v6.py" "$MAIN_FILE" "$PROJECT_DIR"
           python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_compile_fix.py" "$MAIN_FILE"
 
           sed -i 's/versionCode = 8/versionCode = 13/' "$APP_GRADLE"
           sed -i 's/versionName = "0.7.2"/versionName = "0.8.4-dev-bugs-tv3"/' "$APP_GRADLE"
@@ -114,6 +115,7 @@ jobs:
           grep -q 'POISON_DAMAGE_PER_SECOND = 3' "$MAIN_FILE"
           grep -q 'TV: MEADOW' "$MAIN_FILE"
           grep -q 'TV: SKUNK WALK' "$MAIN_FILE"
+          grep -q 'private fun UpgradeChallengeOverlayFixed' "$MAIN_FILE"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/frog_helmet.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_firefly.webp"
           test -s "$PROJECT_DIR/app/src/main/res/drawable-nodpi/bug_poison_fly.webp"
