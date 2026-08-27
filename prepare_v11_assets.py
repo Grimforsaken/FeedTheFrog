@@ -1,58 +1,76 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import base64
+import shutil
 import struct
+import subprocess
 
 root = Path(__file__).resolve().parent
-src = root / "binary_assets_v10"
+src = root / "binary_assets_v11"
 out = root / "generated_assets_v11"
 out.mkdir(exist_ok=True)
 
-parts = sorted(src.glob("homev2_*.b64"))
+# The previous v0.8.8 JPEG reconstruction was structurally malformed even
+# though it had JPEG start/end markers. Android crashed as soon as it decoded
+# that resource. Reconstruct the exact approved homepage from validated WebP
+# chunks, then force a real ffmpeg decode into a conservative PNG resource.
+parts = sorted(src.glob("home_safe_*.b64"))
 if not parts:
-    raise SystemExit("missing v0.8.8 home-screen chunks")
+    raise SystemExit("missing safe homepage chunks")
 
 encoded = "".join(p.read_text().strip() for p in parts)
 try:
-    data = base64.b64decode(encoded, validate=True)
+    webp = base64.b64decode(encoded, validate=True)
 except Exception as exc:
-    raise SystemExit(f"homev2 base64 decode failed: {exc}")
+    raise SystemExit(f"safe homepage base64 decode failed: {exc}")
 
-if len(data) < 32 or not data.startswith(b"\xff\xd8") or not data.endswith(b"\xff\xd9"):
-    raise SystemExit("homev2 is not a complete JPEG")
+if len(webp) < 32 or webp[:4] != b"RIFF" or webp[8:12] != b"WEBP":
+    raise SystemExit("safe homepage source is not a complete WebP")
 
-pos = 2
-width = height = None
-while pos + 4 <= len(data):
-    if data[pos] != 0xFF:
-        pos += 1
-        continue
-    while pos < len(data) and data[pos] == 0xFF:
-        pos += 1
-    if pos >= len(data):
-        break
-    marker = data[pos]
-    pos += 1
-    if marker in (0xD8, 0xD9):
-        continue
-    if marker == 0xDA:
-        break
-    if pos + 2 > len(data):
-        break
-    seglen = struct.unpack(">H", data[pos:pos+2])[0]
-    if seglen < 2 or pos + seglen > len(data):
-        raise SystemExit("homev2 JPEG has an invalid segment")
-    if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
-        if seglen < 7:
-            raise SystemExit("homev2 JPEG SOF segment is too short")
-        height = struct.unpack(">H", data[pos+3:pos+5])[0]
-        width = struct.unpack(">H", data[pos+5:pos+7])[0]
-        break
-    pos += seglen
+ffmpeg = shutil.which("ffmpeg")
+if not ffmpeg:
+    raise SystemExit("ffmpeg is required before prepare_v11_assets.py")
 
-if not width or not height:
-    raise SystemExit("homev2 JPEG dimensions could not be read")
+source = out / "ftf_home_screen_v2_source.webp"
+destination = out / "ftf_home_screen_v2.png"
+old_jpeg = out / "ftf_home_screen_v2.jpg"
+source.write_bytes(webp)
+old_jpeg.unlink(missing_ok=True)
+destination.unlink(missing_ok=True)
 
-destination = out / "ftf_home_screen_v2.jpg"
-destination.write_bytes(data)
-print(f"{destination.name}: {len(data)} bytes, {width}x{height}, {len(parts)} chunks")
+# Decode, do not stream-copy: this proves the source pixels are readable and
+# creates an Android-friendly PNG rather than reusing the broken JPEG stream.
+subprocess.run(
+    [
+        ffmpeg,
+        "-y",
+        "-v", "error",
+        "-i", str(source),
+        "-frames:v", "1",
+        "-pix_fmt", "rgb24",
+        str(destination),
+    ],
+    check=True,
+)
+
+data = destination.read_bytes()
+if len(data) < 33 or not data.startswith(b"\x89PNG\r\n\x1a\n"):
+    raise SystemExit("decoded homepage is not a PNG")
+if data[12:16] != b"IHDR":
+    raise SystemExit("decoded homepage PNG has no IHDR")
+width, height = struct.unpack(">II", data[16:24])
+if (width, height) != (320, 569):
+    raise SystemExit(f"unexpected safe homepage dimensions: {width}x{height}")
+
+# Force a second, independent full decode of the resulting PNG. Marker-only
+# checks are intentionally insufficient after the malformed-JPEG incident.
+subprocess.run(
+    [ffmpeg, "-v", "error", "-i", str(destination), "-f", "null", "-"],
+    check=True,
+)
+
+source.unlink(missing_ok=True)
+print(
+    f"{destination.name}: {len(data)} bytes, {width}x{height}, "
+    f"fully decoded from {len(parts)} safe chunks"
+)
