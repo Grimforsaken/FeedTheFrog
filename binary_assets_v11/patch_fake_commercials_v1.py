@@ -75,3 +75,16 @@ namespace = {
     '__package__': None,
 }
 exec(compile(source, str(Path(__file__)), 'exec'), namespace, namespace)
+
+# Extend the validated fake-commercial build with the development-only billing
+# abstraction. Keeping this separate makes it removable/replacable later.
+billing_patch = Path(__file__).with_name('patch_fake_billing_v1.py')
+if not billing_patch.exists():
+    raise SystemExit(f'missing mock billing patch: {billing_patch}')
+billing_source = billing_patch.read_text()
+billing_namespace = {
+    '__name__': '__main__',
+    '__file__': str(billing_patch),
+    '__package__': None,
+}
+exec(compile(billing_source, str(billing_patch), 'exec'), billing_namespace, billing_namespace)
