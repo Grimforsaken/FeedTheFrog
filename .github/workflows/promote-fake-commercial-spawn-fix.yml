@@ -1,0 +1,82 @@
+name: Promote fake commercial spawn fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/promote-fake-commercial-spawn-fix.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update v1 patch for current center-TV spawn
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('binary_assets_v11/patch_fake_commercials_v1.py')
+          source = path.read_text()
+
+          current_spawn = '''                val screenLeft = boardSize.width * 0.10f
+                          val screenRight = boardSize.width * 0.75f
+                          val screenTop = boardSize.height * 0.24f
+                          val screenBottom = boardSize.height * 0.54f
+                          val centerX = (screenLeft + screenRight) * 0.5f
+                          val centerY = (screenTop + screenBottom) * 0.5f
+                          val x = centerX + (Random.nextFloat() - 0.5f) * boardSize.width * 0.10f
+                          val y = centerY + (Random.nextFloat() - 0.5f) * boardSize.height * 0.06f
+                          onFlyMoved(
+                              fly.id,
+                              Offset(
+                                  x.coerceIn(screenLeft, screenRight),
+                                  y.coerceIn(screenTop, screenBottom)
+                              )
+                          )'''
+
+          protected_spawn = '''                val screenLeft = boardSize.width * 0.10f
+                          val screenRight = boardSize.width * 0.75f
+                          val screenTop = boardSize.height * 0.24f
+                          val screenBottom = boardSize.height * 0.54f
+                          val centerX = (screenLeft + screenRight) * 0.5f
+                          val centerY = (screenTop + screenBottom) * 0.5f
+                          val x = centerX + (Random.nextFloat() - 0.5f) * boardSize.width * 0.10f
+                          val y = centerY + (Random.nextFloat() - 0.5f) * boardSize.height * 0.06f
+                          onFlyMoved(
+                              fly.id,
+                              keepFlyOutsideProtectedControls(
+                                  Offset(
+                                      x.coerceIn(screenLeft, screenRight),
+                                      y.coerceIn(screenTop, screenBottom)
+                                  ),
+                                  boardSize
+                              )
+                          )'''
+
+          pattern = re.compile(
+              r"spawn_old = '''.*?'''\nspawn_new = '''.*?'''\nreplace_once\(spawn_old, spawn_new, 'protected fly spawn'\)",
+              re.S,
+          )
+          replacement = (
+              "spawn_old = '''" + current_spawn + "'''\n"
+              "spawn_new = '''" + protected_spawn + "'''\n"
+              "replace_once(spawn_old, spawn_new, 'protected fly spawn')"
+          )
+          source, count = pattern.subn(lambda _: replacement, source, count=1)
+          if count != 1:
+              raise SystemExit(f'expected one spawn patch definition, got {count}')
+          path.write_text(source)
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add binary_assets_v11/patch_fake_commercials_v1.py
+          git commit -m "Fix fake commercial protected fly spawn [skip ci]"
+          git push origin HEAD:main
