@@ -77,11 +77,58 @@ namespace = {
 exec(compile(source, str(Path(__file__)), 'exec'), namespace, namespace)
 
 # Extend the validated fake-commercial build with the development-only billing
-# abstraction. Keeping this separate makes it removable/replacable later.
+# abstraction. Keeping this separate makes it removable/replaceable later.
 billing_patch = Path(__file__).with_name('patch_fake_billing_v1.py')
 if not billing_patch.exists():
     raise SystemExit(f'missing mock billing patch: {billing_patch}')
 billing_source = billing_patch.read_text()
+
+# Kotlin string templates require a literal dollar sign to be escaped. The
+# development price must render as $0.00, while remaining compiler-safe.
+billing_source = billing_source.replace('$0.00', r'\$0.00')
+
+# Current Header layout no longer contains the old source-level "COINS" label
+# that the first billing pass used as an insertion anchor. Insert the + COINS
+# control into the first Row/Column body instead, which keeps the coin shop in
+# the existing header without depending on the exact label implementation.
+old_header_start = "if 'contentDescription = \"Open development coin shop\"' not in header:"
+old_header_end = "    header = '\\n'.join(lines)"
+header_start = billing_source.find(old_header_start)
+header_end = billing_source.find(old_header_end, header_start)
+if header_start < 0 or header_end < 0:
+    raise SystemExit('could not locate mock billing Header insertion block')
+header_end += len(old_header_end)
+new_header_block = r'''if 'Text("+ COINS"' not in header:
+    lines = header.splitlines()
+    layout_line = next((i for i, line in enumerate(lines) if 'Row(' in line), None)
+    if layout_line is None:
+        layout_line = next((i for i, line in enumerate(lines) if 'Column(' in line), None)
+    if layout_line is None:
+        raise SystemExit('fake-billing patch failed: Header layout anchor')
+
+    brace_line = None
+    for i in range(layout_line, min(len(lines), layout_line + 24)):
+        if '{' in lines[i]:
+            brace_line = i
+            break
+    if brace_line is None:
+        raise SystemExit('fake-billing patch failed: Header layout body')
+
+    indent = re.match(r'\s*', lines[brace_line]).group(0) + '    '
+    coin_button = [
+        indent + 'Button(',
+        indent + '    onClick = onCoinShop,',
+        indent + '    modifier = Modifier.height(28.dp),',
+        indent + '    shape = RoundedCornerShape(9.dp),',
+        indent + '    colors = ButtonDefaults.buttonColors(containerColor = FrogDark)',
+        indent + ') {',
+        indent + '    Text("+ COINS", color = Color.White, fontWeight = FontWeight.Black, fontSize = 10.sp)',
+        indent + '}',
+    ]
+    lines[brace_line + 1:brace_line + 1] = coin_button
+    header = '\n'.join(lines)'''
+billing_source = billing_source[:header_start] + new_header_block + billing_source[header_end:]
+
 billing_namespace = {
     '__name__': '__main__',
     '__file__': str(billing_patch),
