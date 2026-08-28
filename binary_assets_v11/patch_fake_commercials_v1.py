@@ -87,6 +87,14 @@ billing_source = billing_patch.read_text()
 # development price must render as $0.00, while remaining compiler-safe.
 billing_source = billing_source.replace('$0.00', r'\$0.00')
 
+# This project does not generate BuildConfig, so gate all developer-only billing
+# controls using the actual Android application debuggable flag instead. Debug
+# APKs expose the controls; non-debuggable release APKs do not.
+billing_source = billing_source.replace(
+    'BuildConfig.DEBUG',
+    '((LocalContext.current.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0)'
+)
+
 # Current Header layout no longer contains the old source-level "COINS" label
 # that the first billing pass used as an insertion anchor. Insert the + COINS
 # control into the first Row/Column body instead, which keeps the coin shop in
