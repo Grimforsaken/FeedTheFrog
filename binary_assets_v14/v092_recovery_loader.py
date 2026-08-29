@@ -50,6 +50,24 @@ gradle_text = app_gradle.read_text(encoding="utf-8")
 commercial_text = commercial_file.read_text(encoding="utf-8")
 billing_text = billing_file.read_text(encoding="utf-8")
 
+print("v0.9.2 generated version lines:")
+for line in gradle_text.splitlines():
+    if "versionCode" in line or "versionName" in line:
+        print("  " + line.strip())
+
+print("v0.9.2 generated commercial wiring lines:")
+for line in commercial_text.splitlines():
+    low = line.lower()
+    if (
+        "r.drawable" in low
+        or "ad_" in low
+        or "frog cola" in low
+        or "bug burger" in low
+        or "lily pad insurance" in low
+        or "pond cleanup" in low
+    ):
+        print("  " + line.strip())
+
 checks = [
     ("versionCode = 21", "versionCode = 21" in gradle_text),
     ('versionName = "0.9.2-full-update"', 'versionName = "0.9.2-full-update"' in gradle_text),
