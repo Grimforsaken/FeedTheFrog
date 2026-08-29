@@ -1,0 +1,247 @@
+name: Build Feed the Frog v0.9.2 Update
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v092-update
+    paths:
+      - "binary_assets_v14/**"
+      - ".github/workflows/build-v092-update.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout v0.9.2 branch
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Install Android API 37 and Build-Tools 37
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platform-tools"
+          PLATFORM_PACKAGE="$(sdkmanager --list | awk -F'|' '/platforms;android-37(\.0)?[[:space:]]*\|/ {gsub(/[[:space:]]/, "", $1); print $1; exit}')"
+          test -n "$PLATFORM_PACKAGE"
+          sdkmanager "$PLATFORM_PACKAGE"
+          BUILD_TOOLS="$(sdkmanager --list | awk -F'|' '/build-tools;37\./ {gsub(/[[:space:]]/, "", $1); print $1}' | sort -V | tail -n 1)"
+          test -n "$BUILD_TOOLS"
+          sdkmanager "$BUILD_TOOLS"
+
+      - name: Extract clean Feed the Frog source
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZIP_FILE="$(find . -maxdepth 1 -type f -name 'FeedTheFrog-Android-*.zip' | sort | tail -n 1)"
+          test -n "$ZIP_FILE"
+          rm -rf extracted
+          mkdir -p extracted
+          unzip -q "$ZIP_FILE" -d extracted
+
+      - name: Recreate verified v0.9.1 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          MAIN_FILE="$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
+          MANIFEST="$PROJECT_DIR/app/src/main/AndroidManifest.xml"
+          DRAWABLE_DIR="$PROJECT_DIR/app/src/main/res/drawable-nodpi"
+          MIPMAP_DIR="$PROJECT_DIR/app/src/main/res/mipmap-nodpi"
+
+          if [ -f "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" ]; then
+            mv "$PROJECT_DIR/app/src/main/res/raw/catch.ogg" "$PROJECT_DIR/app/src/main/res/raw/catch_sound.ogg"
+            sed -i 's/R\.raw\.catch/R.raw.catch_sound/g' "$MAIN_FILE"
+          fi
+
+          sed -i '/^import androidx\.compose\.foundation\.layout\.weight$/d' "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_tap_game.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v2.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_ui_art_costs.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_tv_subscription.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v3.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v4.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v5.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/prepare_v8_assets.py"
+          python3 "$GITHUB_WORKSPACE/patch_v6_preflight.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v6.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_tv_v2.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_compile_fix.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/prepare_v9_assets.py"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v7.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/prepare_v11_assets.py"
+          python3 "$GITHUB_WORKSPACE/patch_gameplay_v8.py" "$MAIN_FILE" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/patch_home_final.py" "$MAIN_FILE"
+          python3 "$GITHUB_WORKSPACE/patch_home_png_resource.py" "$PROJECT_DIR"
+          python3 "$GITHUB_WORKSPACE/binary_assets_v11/patch_fake_commercials_v1.py" "$MAIN_FILE" "$PROJECT_DIR"
+
+          python3 "$GITHUB_WORKSPACE/prepare_v10_assets.py"
+          mkdir -p "$DRAWABLE_DIR" "$MIPMAP_DIR"
+          cp "$GITHUB_WORKSPACE/generated_assets_v10/ftf_home_frog.png" "$DRAWABLE_DIR/ftf_home_frog.png"
+          cp "$GITHUB_WORKSPACE/generated_assets_v10/frog_helmet.png" "$DRAWABLE_DIR/frog_helmet.png"
+          cp "$GITHUB_WORKSPACE/generated_assets_v10/ftf_poison_frog.png" "$DRAWABLE_DIR/ftf_poison_frog.png"
+          rm -f "$DRAWABLE_DIR/ftf_home_frog.webp" "$DRAWABLE_DIR/frog_helmet.webp" "$DRAWABLE_DIR/ftf_poison_frog.webp"
+          cp "$DRAWABLE_DIR/ftf_home_frog.png" "$MIPMAP_DIR/ftf_launcher.png"
+          sed -i 's#android:icon="@drawable/ftf_home_frog"#android:icon="@mipmap/ftf_launcher"#' "$MANIFEST"
+          sed -i 's#android:roundIcon="@drawable/ftf_home_frog"#android:roundIcon="@mipmap/ftf_launcher"#' "$MANIFEST"
+
+          grep -q 'versionName = "0.9.1-mock-billing"' "$PROJECT_DIR/app/build.gradle.kts"
+          grep -q 'class FakeBillingProvider' "$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/BillingSystem.kt"
+          grep -q 'class CommercialBreakManager' "$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/CommercialSystem.kt"
+
+      - name: Reconstruct v0.9.2 assets and patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/v092-assets
+          cat "$GITHUB_WORKSPACE"/binary_assets_v14/v092_assets_*.b64part | base64 -d > /tmp/v092-assets.zip
+          unzip -t /tmp/v092-assets.zip
+          unzip -q /tmp/v092-assets.zip -d /tmp/v092-assets
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, zlib
+          src = Path('binary_assets_v14/patch_v092_full_update.py.zlib.b64').read_text().strip()
+          Path('/tmp/patch_v092_full_update.py').write_bytes(zlib.decompress(base64.b64decode(src)))
+          PY
+          chmod +x /tmp/patch_v092_full_update.py
+          echo 'v0.9.2 patch invocation markers:'
+          grep -nE 'sys\.argv|usage:' /tmp/patch_v092_full_update.py | head -20 || true
+
+      - name: Apply v0.9.2 update
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          MAIN_FILE="$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/MainActivity.kt"
+          python3 /tmp/patch_v092_full_update.py "$MAIN_FILE" "$PROJECT_DIR" /tmp/v092-assets
+
+          APP_GRADLE="$PROJECT_DIR/app/build.gradle.kts"
+          COMMERCIAL_FILE="$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/CommercialSystem.kt"
+          DRAWABLE_DIR="$PROJECT_DIR/app/src/main/res/drawable-nodpi"
+          RAW_DIR="$PROJECT_DIR/app/src/main/res/raw"
+
+          grep -q 'versionCode = 21' "$APP_GRADLE"
+          grep -q 'versionName = "0.9.2-full-update"' "$APP_GRADLE"
+          grep -q 'LIGHTNING_BUG' "$MAIN_FILE"
+          grep -q 'LADYBUG' "$MAIN_FILE"
+          grep -q 'JUNE_BUG' "$MAIN_FILE"
+          grep -q 'lightningImmune' "$MAIN_FILE"
+          grep -q 'luckyCloverActive' "$MAIN_FILE"
+          grep -q 'armorHits' "$MAIN_FILE"
+          grep -q 'selectedTvContentMask' "$MAIN_FILE"
+          grep -q 'Checkbox' "$MAIN_FILE"
+          grep -q 'ad_frog_cola' "$COMMERCIAL_FILE"
+          grep -q 'ad_bug_burgers' "$COMMERCIAL_FILE"
+          grep -q 'ad_lily_pad_insurance' "$COMMERCIAL_FILE"
+
+          for asset in ladybug_lucky_clover_asset armored_june_bug_asset lightning_bug_asset lightning_rod_asset frog_shocked_asset ad_frog_cola ad_bug_burgers ad_lily_pad_insurance; do
+            test -s "$DRAWABLE_DIR/${asset}.webp"
+          done
+          test -s "$RAW_DIR/ad_pond_cleanup.mp4"
+
+          test "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 "$RAW_DIR/ad_pond_cleanup.mp4" | wc -l)" -eq 0
+          test "$(ffprobe -v error -select_streams v -show_entries stream=index -of csv=p=0 "$RAW_DIR/ad_pond_cleanup.mp4" | wc -l)" -ge 1
+
+          # Preserve verified prior systems.
+          grep -q 'class FakeBillingProvider' "$PROJECT_DIR/app/src/main/java/com/feedthefrog/game/BillingSystem.kt"
+          grep -q 'TIMER_SKIP_COST = 1' "$MAIN_FILE"
+          grep -q 'BEE_IMMUNITY_COST = 1' "$MAIN_FILE"
+          grep -q 'FIREFLY_IMMUNITY_COST = 1' "$MAIN_FILE"
+          grep -q 'POISON_DAMAGE_PER_SECOND = 3' "$MAIN_FILE"
+          grep -q 'keepFlyOutsideProtectedControls' "$MAIN_FILE"
+          grep -q 'Test advertiser link — no real website opened.' "$MAIN_FILE"
+
+          if grep -RniE 'play-services-ads|com\.google\.android\.gms\.ads|AdMob|Anzu|com\.android\.billingclient' "$PROJECT_DIR/app"; then
+            echo 'Unexpected real advertising/billing SDK reference found' >&2
+            exit 1
+          fi
+
+          rm -rf "$PROJECT_DIR/.gradle" "$PROJECT_DIR/app/build"
+
+      - name: Build v0.9.2 APK
+        id: build
+        shell: bash
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          PROJECT_FILE="$(find extracted -type f \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) | head -n 1)"
+          PROJECT_DIR="$(dirname "$PROJECT_FILE")"
+          cd "$PROJECT_DIR"
+          gradle --no-daemon --console=plain --stacktrace clean :app:assembleDebug 2>&1 | tee "$GITHUB_WORKSPACE/build-error-v092.log"
+
+      - name: Stop after failed build
+        if: steps.build.outcome == 'failure'
+        shell: bash
+        run: |
+          cat build-error-v092.log || true
+          exit 1
+
+      - name: Verify packaged v0.9.2 APK
+        if: steps.build.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_FILE="$(find extracted -type f -path '*/app/build/outputs/apk/debug/app-debug.apk' | head -n 1)"
+          test -s "$APK_FILE"
+          unzip -l "$APK_FILE" > apk-contents-v092.txt
+
+          for asset in ladybug_lucky_clover_asset armored_june_bug_asset lightning_bug_asset lightning_rod_asset frog_shocked_asset ad_frog_cola ad_bug_burgers ad_lily_pad_insurance; do
+            grep -q "$asset" apk-contents-v092.txt
+          done
+          grep -q 'res/raw/ad_pond_cleanup.mp4' apk-contents-v092.txt
+          grep -q 'res/raw/subscription_pond.webm' apk-contents-v092.txt
+          grep -q 'res/raw/subscription_meadow.mp4' apk-contents-v092.txt
+          grep -q 'res/raw/subscription_skunk.mp4' apk-contents-v092.txt
+          grep -q 'drawable-nodpi-v4/ftf_home_screen_v2.png' apk-contents-v092.txt
+
+          unzip -p "$APK_FILE" res/raw/ad_pond_cleanup.mp4 > /tmp/ad_pond_cleanup.mp4
+          test "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 /tmp/ad_pond_cleanup.mp4 | wc -l)" -eq 0
+          test "$(ffprobe -v error -select_streams v -show_entries stream=index -of csv=p=0 /tmp/ad_pond_cleanup.mp4 | wc -l)" -ge 1
+
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk
+          sha256sum /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk
+          echo "Verified v0.9.2 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk)"
+
+      - name: Upload verified v0.9.2 APK
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-TV-v0.9.2-full-update
+          path: /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload generated v0.9.2 source for audit
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-v0.9.2-generated-source
+          path: |
+            extracted/**/app/src/main/java/com/feedthefrog/game/MainActivity.kt
+            extracted/**/app/src/main/java/com/feedthefrog/game/CommercialSystem.kt
+            extracted/**/app/src/main/java/com/feedthefrog/game/BillingSystem.kt
+            extracted/**/app/build.gradle.kts
+          if-no-files-found: error
+          retention-days: 7
