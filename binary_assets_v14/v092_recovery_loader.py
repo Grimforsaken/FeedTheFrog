@@ -10,6 +10,7 @@ try:
     recovered = zlib.decompress(payload)
 except zlib.error:
     recovered = zlib.decompress(payload[2:-4], -zlib.MAX_WBITS)
+
 bad = b"\xb8\xe2\x8c\xa7\xef\xb8\x8f"
 good = "🌧️".encode("utf-8")
 if recovered.count(bad) != 1:
@@ -25,7 +26,9 @@ with zipfile.ZipFile(asset_zip, "r") as zf:
     bad_entry = zf.testzip()
     if bad_entry:
         raise SystemExit(f"Bad asset ZIP entry: {bad_entry}")
-Path("/tmp/v092_assets.zip.b64").write_text(base64.b64encode(asset_zip.read_bytes()).decode("ascii"), encoding="ascii")
+Path("/tmp/v092_assets.zip.b64").write_text(
+    base64.b64encode(asset_zip.read_bytes()).decode("ascii"), encoding="ascii"
+)
 
 if len(sys.argv) < 3:
     raise SystemExit("usage: patch_v092_full_update.py <MainActivity.kt> <project_dir>")
@@ -34,30 +37,30 @@ exec(compile(text, "/tmp/patch_v092_full_update.recovered.py", "exec"), globals(
 
 main_file = Path(sys.argv[1])
 project_dir = Path(sys.argv[2])
+
+# Compile repair: v0.9.2 adds three enum values with dedicated WebP rendering,
+# but the older Canvas fallback drawBug() must still be exhaustive. Keep explicit
+# species branches so future BugType additions continue to fail loudly.
+main_text = main_file.read_text(encoding="utf-8")
+anchor = "        BugType.COMMON_FLY -> drawStandardFly(center, 1.0f * boostScale, bodyColor = Color(0xFF48504B), headColor = Color(0xFF202520), wingColor = Color.White.copy(alpha = 0.82f))\n"
+if main_text.count(anchor) != 1:
+    raise SystemExit(f"Expected one drawBug COMMON_FLY anchor, found {main_text.count(anchor)}")
+new_branches = (
+    "        BugType.LADYBUG -> drawStandardFly(center, 0.9f * boostScale, bodyColor = Color(0xFFD83A35), headColor = Color(0xFF1C1C1C), wingColor = Color.White.copy(alpha = 0.82f))\n"
+    "        BugType.JUNE_BUG -> drawStandardFly(center, 1.12f * boostScale, bodyColor = Color(0xFF556B3D), headColor = Color(0xFF303A28), wingColor = Color.White.copy(alpha = 0.72f))\n"
+    "        BugType.LIGHTNING_BUG -> drawStandardFly(center, 1.0f * boostScale, bodyColor = Color(0xFF292A24), headColor = Color(0xFF171812), wingColor = Color(0xFFFFE66A).copy(alpha = 0.88f))\n"
+)
+main_text = main_text.replace(anchor, anchor + new_branches, 1)
+main_file.write_text(main_text, encoding="utf-8")
+print("repaired drawBug fallbacks for LADYBUG, JUNE_BUG, and LIGHTNING_BUG")
+
 app_gradle = project_dir / "app/build.gradle.kts"
 commercial_file = project_dir / "app/src/main/java/com/feedthefrog/game/CommercialSystem.kt"
 billing_file = project_dir / "app/src/main/java/com/feedthefrog/game/BillingSystem.kt"
-main_text = main_file.read_text(encoding="utf-8")
 gradle_text = app_gradle.read_text(encoding="utf-8")
 commercial_text = commercial_file.read_text(encoding="utf-8")
 billing_text = billing_file.read_text(encoding="utf-8")
 combined_commercial = main_text + "\n" + commercial_text
-
-print("v0.9.2 generated MainActivity lines 2098-2128:")
-lines = main_text.splitlines()
-for n in range(2098, min(2128, len(lines)) + 1):
-    print(f"  {n:04d}: {lines[n-1]}")
-
-print("v0.9.2 generated version lines:")
-for line in gradle_text.splitlines():
-    if "versionCode" in line or "versionName" in line:
-        print("  " + line.strip())
-
-print("v0.9.2 MainActivity commercial/image wiring lines:")
-for line in main_text.splitlines():
-    low = line.lower()
-    if any(token in low for token in ["ad_frog_cola", "ad_bug_burgers", "ad_lily_pad_insurance", "ad_pond_cleanup", "fakecommercialscreen", "currentcommercial"]):
-        print("  " + line.strip())
 
 checks = [
     ("versionCode = 21", "versionCode = 21" in gradle_text),
@@ -80,15 +83,26 @@ checks = [
     ("POISON_DAMAGE_PER_SECOND = 3", "POISON_DAMAGE_PER_SECOND = 3" in main_text),
     ("keepFlyOutsideProtectedControls", "keepFlyOutsideProtectedControls" in main_text),
     ("Test advertiser link", "Test advertiser link — no real website opened." in main_text),
+    ("explicit LADYBUG draw fallback", "BugType.LADYBUG -> drawStandardFly" in main_text),
+    ("explicit JUNE_BUG draw fallback", "BugType.JUNE_BUG -> drawStandardFly" in main_text),
+    ("explicit LIGHTNING_BUG draw fallback", "BugType.LIGHTNING_BUG -> drawStandardFly" in main_text),
 ]
 print("v0.9.2 post-patch marker diagnostics:")
 for label, ok in checks:
     print(f"  {'PASS' if ok else 'FAIL'} {label}")
+    if not ok:
+        raise SystemExit(f"Missing required v0.9.2 marker: {label}")
 
 draw = project_dir / "app/src/main/res/drawable-nodpi"
 raw = project_dir / "app/src/main/res/raw"
-for name in ["ladybug_lucky_clover_asset", "armored_june_bug_asset", "lightning_bug_asset", "lightning_rod_asset", "frog_shocked_asset", "ad_frog_cola", "ad_bug_burgers", "ad_lily_pad_insurance"]:
+for name in [
+    "ladybug_lucky_clover_asset", "armored_june_bug_asset", "lightning_bug_asset",
+    "lightning_rod_asset", "frog_shocked_asset", "ad_frog_cola",
+    "ad_bug_burgers", "ad_lily_pad_insurance",
+]:
     p = draw / f"{name}.webp"
-    print(f"  {'PASS' if p.is_file() and p.stat().st_size else 'FAIL'} asset {p.name}")
+    if not p.is_file() or not p.stat().st_size:
+        raise SystemExit(f"Missing v0.9.2 asset: {p}")
 video = raw / "ad_pond_cleanup.mp4"
-print(f"  {'PASS' if video.is_file() and video.stat().st_size else 'FAIL'} asset ad_pond_cleanup.mp4")
+if not video.is_file() or not video.stat().st_size:
+    raise SystemExit("Missing v0.9.2 ad_pond_cleanup.mp4")
