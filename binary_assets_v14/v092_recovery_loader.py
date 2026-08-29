@@ -43,6 +43,11 @@ commercial_text = commercial_file.read_text(encoding="utf-8")
 billing_text = billing_file.read_text(encoding="utf-8")
 combined_commercial = main_text + "\n" + commercial_text
 
+print("v0.9.2 generated MainActivity lines 2098-2128:")
+lines = main_text.splitlines()
+for n in range(2098, min(2128, len(lines)) + 1):
+    print(f"  {n:04d}: {lines[n-1]}")
+
 print("v0.9.2 generated version lines:")
 for line in gradle_text.splitlines():
     if "versionCode" in line or "versionName" in line:
