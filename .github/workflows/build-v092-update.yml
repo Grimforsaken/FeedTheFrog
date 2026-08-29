@@ -143,7 +143,7 @@ jobs:
           RAW_DIR="$PROJECT_DIR/app/src/main/res/raw"
 
           grep -q 'versionCode = 21' "$APP_GRADLE"
-          grep -q 'versionName = "0.9.2-full-update"' "$APP_GRADLE"
+          grep -q 'versionName = "0.9.2-bugs-tv-lightning"' "$APP_GRADLE"
           grep -q 'LIGHTNING_BUG' "$MAIN_FILE"
           grep -q 'LADYBUG' "$MAIN_FILE"
           grep -q 'JUNE_BUG' "$MAIN_FILE"
@@ -152,9 +152,11 @@ jobs:
           grep -q 'armorHits' "$MAIN_FILE"
           grep -q 'selectedTvContentMask' "$MAIN_FILE"
           grep -q 'Checkbox' "$MAIN_FILE"
-          grep -q 'ad_frog_cola' "$COMMERCIAL_FILE"
-          grep -q 'ad_bug_burgers' "$COMMERCIAL_FILE"
-          grep -q 'ad_lily_pad_insurance' "$COMMERCIAL_FILE"
+          grep -q 'R.drawable.ad_frog_cola' "$MAIN_FILE"
+          grep -q 'R.drawable.ad_bug_burgers' "$MAIN_FILE"
+          grep -q 'R.drawable.ad_lily_pad_insurance' "$MAIN_FILE"
+          grep -q 'R.raw.ad_pond_cleanup' "$MAIN_FILE"
+          grep -q 'class CommercialBreakManager' "$COMMERCIAL_FILE"
 
           for asset in ladybug_lucky_clover_asset armored_june_bug_asset lightning_bug_asset lightning_rod_asset frog_shocked_asset ad_frog_cola ad_bug_burgers ad_lily_pad_insurance; do
             test -s "$DRAWABLE_DIR/${asset}.webp"
@@ -220,16 +222,22 @@ jobs:
           test "$(ffprobe -v error -select_streams a -show_entries stream=index -of csv=p=0 /tmp/ad_pond_cleanup.mp4 | wc -l)" -eq 0
           test "$(ffprobe -v error -select_streams v -show_entries stream=index -of csv=p=0 /tmp/ad_pond_cleanup.mp4 | wc -l)" -ge 1
 
-          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk
-          sha256sum /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk
-          echo "Verified v0.9.2 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk)"
+          BADGING_TOOL="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$BADGING_TOOL"
+          "$BADGING_TOOL" dump badging "$APK_FILE" > apk-badging-v092.txt
+          grep -q "versionCode='21'" apk-badging-v092.txt
+          grep -q "versionName='0.9.2-bugs-tv-lightning'" apk-badging-v092.txt
+
+          cp "$APK_FILE" /tmp/FeedTheFrog-TV-v0.9.2-bugs-tv-lightning.apk
+          sha256sum /tmp/FeedTheFrog-TV-v0.9.2-bugs-tv-lightning.apk
+          echo "Verified v0.9.2 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.9.2-bugs-tv-lightning.apk)"
 
       - name: Upload verified v0.9.2 APK
         if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: FeedTheFrog-TV-v0.9.2-full-update
-          path: /tmp/FeedTheFrog-TV-v0.9.2-full-update.apk
+          name: FeedTheFrog-TV-v0.9.2-bugs-tv-lightning
+          path: /tmp/FeedTheFrog-TV-v0.9.2-bugs-tv-lightning.apk
           if-no-files-found: error
           retention-days: 30
 
