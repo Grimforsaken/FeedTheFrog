@@ -145,15 +145,12 @@ public class MainActivity extends Activity {
             for (Note n : notes) {
                 if (previousSongTime < n.timeMs && song >= n.timeMs) {
                     playTone(n.lane);
-                    // The other three frogs are automatic bandmates.
                     if (n.lane != selectedLane) frogs[n.lane].playUntil = now + 170;
                 }
-                // Only the frog selected by the player can miss a note.
                 if (n.lane == selectedLane && !n.judged && song > n.timeMs + GOOD) {
                     n.judged = true;
                     applyResult("MISS", now);
                 }
-                // Automatic bandmate notes need no player judgment.
                 if (n.lane != selectedLane && song > n.timeMs + GOOD) n.judged = true;
             }
             if (song > END_TIME) {
@@ -401,7 +398,6 @@ public class MainActivity extends Activity {
         void drawLanes(Canvas c,long song) {
             float laneW=getWidth()/4f;
             float top=d(238);
-            // Exact requested position: one quarter of the screen remains below the hit bar.
             float hitY=getHeight()*0.75f;
             float bottom=getHeight();
 
@@ -411,7 +407,6 @@ public class MainActivity extends Activity {
                 c.drawRect(i*laneW+d(2),top,(i+1)*laneW-d(2),bottom,p);
             }
 
-            // Player hit bar exactly 1/4 of the way up from the bottom.
             p.setColor(Color.WHITE);
             c.drawRect(0,hitY-d(2),getWidth(),hitY+d(2),p);
             p.setColor(laneColor[selectedLane]);
@@ -431,7 +426,8 @@ public class MainActivity extends Activity {
                     p.setColor(Color.WHITE);
                     c.drawCircle(x,y,d(5),p);
                 } else {
-                    p.setColor(Color.argb(90, laneColor[n.lane]));
+                    int base=laneColor[n.lane];
+                    p.setColor(Color.argb(90,Color.red(base),Color.green(base),Color.blue(base)));
                     c.drawCircle(x,y,d(8),p);
                 }
             }
@@ -476,7 +472,6 @@ public class MainActivity extends Activity {
                 returnToChooser();
                 return true;
             }
-            // Only taps in the chosen frog's lane count as performance input.
             float laneW=getWidth()/4f;
             int tapped=(int)(e.getX()/laneW);
             if(tapped==selectedLane) {
