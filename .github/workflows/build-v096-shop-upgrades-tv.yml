@@ -1,0 +1,121 @@
+name: Build Feed the Frog v0.9.6 Shop Upgrades TV
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v096-shop-upgrades-tv
+    paths:
+      - "binary_assets_v17/**"
+      - ".github/workflows/build-v096-shop-upgrades-tv.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout v0.9.6 branch
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Reconstruct verified v0.9.5 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, base64, gzip
+          workflow = Path('.github/workflows/build-v094-tv-menu-pages.yml').read_text()
+          match = re.search(r"echo '([^']+)' \| base64 -d \| gzip -d > /tmp/v094_build\.sh", workflow)
+          if not match:
+              raise SystemExit('Could not locate verified v0.9.4 build driver')
+          Path('/tmp/v094_build.sh').write_bytes(gzip.decompress(base64.b64decode(match.group(1))))
+          PY
+          chmod +x /tmp/v094_build.sh
+          /tmp/v094_build.sh
+          python3 binary_assets_v16/patch_v095_compact_hud.py
+          grep -q 'versionCode = 24' extracted/FeedTheFrog/app/build.gradle.kts
+          grep -q 'versionName = "0.9.5-compact-hud"' extracted/FeedTheFrog/app/build.gradle.kts
+
+      - name: Apply v0.9.6 menu corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 -d binary_assets_v17/patch_v096_shop_upgrades_tv.py.gz.b64 | gzip -d > /tmp/patch_v096_shop_upgrades_tv.py
+          python3 /tmp/patch_v096_shop_upgrades_tv.py
+          MAIN='extracted/FeedTheFrog/app/src/main/java/com/feedthefrog/game/MainActivity.kt'
+          GRADLE='extracted/FeedTheFrog/app/build.gradle.kts'
+          grep -q 'versionCode = 25' "$GRADLE"
+          grep -q 'versionName = "0.9.6-shop-upgrades-tv"' "$GRADLE"
+          grep -q 'Text("SHOP", color = Color.White' "$MAIN"
+          grep -q 'private fun PurchaseShopArtOverlay(' "$MAIN"
+          grep -q 'SUBSCRIPTION SERVICE' "$MAIN"
+          grep -q 'contentDescription = "Go to Upgrades"' "$MAIN"
+          grep -q 'DialogProperties(usePlatformDefaultWidth = false)' "$MAIN"
+          grep -q 'modifier = Modifier.fillMaxWidth().fillMaxHeight(0.90f)' "$MAIN"
+          grep -q 'ShopSectionTitle("UPGRADES"' "$MAIN"
+          ! grep -q 'private fun CoinShopArtOverlay(' "$MAIN"
+          ! grep -q 'val totalPages = 7' "$MAIN"
+
+      - name: Build v0.9.6 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd extracted/FeedTheFrog
+          ./gradlew --no-daemon clean assembleDebug
+
+      - name: Verify packaged v0.9.6 APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK='extracted/FeedTheFrog/app/build/outputs/apk/debug/app-debug.apk'
+          test -s "$APK"
+          unzip -t "$APK"
+          unzip -l "$APK" | grep -q 'res/drawable-nodpi-v4/shop_menu.webp'
+          unzip -l "$APK" | grep -q 'res/drawable-nodpi-v4/change_tv_menu.webp'
+          unzip -l "$APK" | grep -q 'res/drawable-nodpi-v4/menu_close.webp'
+          unzip -l "$APK" | grep -q 'res/drawable-nodpi-v4/ftf_upgrades.webp'
+          unzip -l "$APK" | grep -q 'res/raw/subscription_dumpster_alley.mp4'
+          unzip -l "$APK" | grep -q 'res/drawable-nodpi-v4/ladybug_lucky_clover_asset.webp'
+          unzip -l "$APK" | grep -q 'res/drawable-nodpi-v4/armored_june_bug_asset.webp'
+          unzip -l "$APK" | grep -q 'res/drawable-nodpi-v4/lightning_bug_asset.webp'
+          cp "$APK" /tmp/FeedTheFrog-TV-v0.9.6-shop-upgrades-tv.apk
+          sha256sum /tmp/FeedTheFrog-TV-v0.9.6-shop-upgrades-tv.apk
+          echo "Verified v0.9.6 APK size: $(stat -c%s /tmp/FeedTheFrog-TV-v0.9.6-shop-upgrades-tv.apk)"
+
+      - name: Upload verified v0.9.6 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-TV-v0.9.6-shop-upgrades-tv
+          path: /tmp/FeedTheFrog-TV-v0.9.6-shop-upgrades-tv.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload generated v0.9.6 source for audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-v0.9.6-generated-source
+          path: |
+            extracted/**/app/src/main/java/com/feedthefrog/game/MainActivity.kt
+            extracted/**/app/src/main/java/com/feedthefrog/game/CommercialSystem.kt
+            extracted/**/app/src/main/java/com/feedthefrog/game/BillingSystem.kt
+            extracted/**/app/build.gradle.kts
+          if-no-files-found: error
+          retention-days: 7
