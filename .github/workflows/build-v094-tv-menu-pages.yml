@@ -1,0 +1,64 @@
+name: Build Feed the Frog v0.9.4 TV Menu Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v094-release
+    paths:
+      - "binary_assets_v15/**"
+      - ".github/workflows/build-v094-tv-menu-pages.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout v0.9.4 branch
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Accept Android SDK licenses
+        shell: bash
+        run: yes | sdkmanager --licenses >/dev/null || true
+
+      - name: Reconstruct and run verified v0.9.4 build driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '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' | base64 -d | gzip -d > /tmp/v094_build.sh
+          chmod +x /tmp/v094_build.sh
+          /tmp/v094_build.sh
+
+      - name: Upload verified v0.9.4 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-TV-v0.9.4-tv-menu-pages
+          path: /tmp/FeedTheFrog-TV-v0.9.4-tv-menu-pages.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload generated v0.9.4 source for audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: FeedTheFrog-v0.9.4-generated-source
+          path: |
+            extracted/**/app/src/main/java/com/feedthefrog/game/MainActivity.kt
+            extracted/**/app/src/main/java/com/feedthefrog/game/CommercialSystem.kt
+            extracted/**/app/src/main/java/com/feedthefrog/game/BillingSystem.kt
+            extracted/**/app/build.gradle.kts
+          if-no-files-found: error
+          retention-days: 7
