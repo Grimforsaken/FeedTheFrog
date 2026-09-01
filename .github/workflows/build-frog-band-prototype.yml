@@ -52,14 +52,14 @@ jobs:
           set -euo pipefail
           APK="frog-band-prototype/app/build/outputs/apk/debug/app-debug.apk"
           test -s "$APK"
-          cp "$APK" FrogBand-v0.1-concept.apk
-          unzip -t FrogBand-v0.1-concept.apk >/dev/null
-          ls -lh FrogBand-v0.1-concept.apk
+          cp "$APK" FrogBand-v0.2-frog-select.apk
+          unzip -t FrogBand-v0.2-frog-select.apk >/dev/null
+          ls -lh FrogBand-v0.2-frog-select.apk
 
       - name: Upload Frog Band APK
         uses: actions/upload-artifact@v4
         with:
-          name: FrogBand-v0.1-concept
-          path: FrogBand-v0.1-concept.apk
+          name: FrogBand-v0.2-frog-select
+          path: FrogBand-v0.2-frog-select.apk
           if-no-files-found: error
           retention-days: 30
