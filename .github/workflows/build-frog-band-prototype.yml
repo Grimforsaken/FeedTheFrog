@@ -1,0 +1,61 @@
+name: Build Frog Band Prototype APK
+
+on:
+  push:
+    branches:
+      - frog-band-prototype-v001
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Build Frog Band debug APK
+        shell: bash
+        working-directory: frog-band-prototype
+        run: gradle --no-daemon --console=plain clean :app:assembleDebug
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="frog-band-prototype/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          cp "$APK" FrogBand-v0.1-concept.apk
+          unzip -t FrogBand-v0.1-concept.apk >/dev/null
+          ls -lh FrogBand-v0.1-concept.apk
+
+      - name: Upload Frog Band APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: FrogBand-v0.1-concept
+          path: FrogBand-v0.1-concept.apk
+          if-no-files-found: error
+          retention-days: 30
