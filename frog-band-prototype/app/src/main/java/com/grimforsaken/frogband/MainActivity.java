@@ -1,22 +1,21 @@
 package com.grimforsaken.frogband;
 
 import android.app.Activity;
-import android.content.Context;
+import android.os.Bundle;
+import android.os.SystemClock;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.Typeface;
-import android.media.AudioManager;
-import android.media.ToneGenerator;
-import android.os.Bundle;
-import android.os.SystemClock;
-import android.util.SparseIntArray;
+import android.media.MediaPlayer;
 import android.view.MotionEvent;
 import android.view.View;
-
+import android.content.Context;
+import android.util.SparseIntArray;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
-import java.util.Comparator;
 
 public class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
@@ -25,591 +24,387 @@ public class MainActivity extends Activity {
     }
 
     static final class Note {
-        final int side;          // 0 = left thumb, 1 = right thumb
         final long timeMs;
-        final long durationMs;   // 0 = tap, >0 = hold
-        boolean judged;
-        boolean holding;
-        String holdQuality = "";
-
-        Note(int side, long timeMs, long durationMs) {
-            this.side = side;
-            this.timeMs = timeMs;
-            this.durationMs = durationMs;
-        }
-
-        boolean isHold() { return durationMs > 0; }
-    }
-
-    static final class Frog {
-        int perfectStreak;
-        int missStreak;
-        int state; // 0 normal, 1 shocked, 2 on fire
-        long playUntil;
-        int lastSide;
+        final int lane;
+        final long durationMs;
+        boolean hit;
+        boolean done;
+        Note(long t, int l, long d) { timeMs=t; lane=l; durationMs=d; }
     }
 
     static final class GameView extends View {
         final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
         final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
-        final ArrayList<Note> notes = new ArrayList<>();
-        final Frog frog = new Frog();
-        final SparseIntArray pointerSides = new SparseIntArray();
-        final Note[] activeHold = new Note[2];
-        final boolean[] thumbDown = new boolean[2];
-
-        final String[] names = { "GUITAR", "BASS", "DRUMS", "KEYBOARD" };
-        final String[] roles = { "Electric Guitar", "Bass Guitar", "Drum Kit", "Keyboard" };
-        final int[] instrumentColor = {
-                Color.rgb(230,75,75), Color.rgb(72,153,225),
-                Color.rgb(238,187,49), Color.rgb(160,96,222)
+        final ArrayList<Note> guitar = new ArrayList<>();
+        final ArrayList<Note> drums = new ArrayList<>();
+        final SparseIntArray pointerLane = new SparseIntArray();
+        final int[] lanePointers = new int[4];
+        final int[] laneColors = {
+                Color.rgb(232,78,78), Color.rgb(247,184,57),
+                Color.rgb(75,168,231), Color.rgb(174,103,225)
         };
-        final ToneGenerator[] tones = new ToneGenerator[4];
+        final String[] drumLabels = {"KICK","SNARE","HAT","CYM/TOM"};
+        final String[] guitarLabels = {"LOW","MID-L","MID-H","HIGH"};
 
-        static final long TRAVEL = 1800;
-        static final long PERFECT = 45;
-        static final long GREAT = 90;
-        static final long GOOD = 140;
-        static final long END_TIME = 36000;
+        static final int GUITAR = 0;
+        static final int DRUMS = 1;
+        static final long TRAVEL_MS = 1900;
+        static final long PERFECT_MS = 50;
+        static final long GREAT_MS = 95;
+        static final long GOOD_MS = 150;
+        static final long PREROLL_MS = 2200;
+        static final long SONG_MS = 217453;
 
-        int selectedInstrument = -1;
         boolean choosing = true;
-        boolean finished;
-        long songStart;
-        long previousSongTime;
-        int score;
-        int combo;
-        int bestCombo;
+        boolean finished = false;
+        boolean audioStarted = false;
+        int instrument = GUITAR;
+        int score = 0;
+        int combo = 0;
+        int bestCombo = 0;
+        int perfectStreak = 0;
+        int missStreak = 0;
+        int frogState = 0;
+        int lastPlayedLane = 0;
+        long frogPlayUntil = 0;
+        long songEpoch = 0;
         String feedback = "";
-        long feedbackUntil;
+        long feedbackUntil = 0;
+        MediaPlayer music;
 
         GameView(Context context) {
             super(context);
             setKeepScreenOn(true);
-            setFocusable(true);
             stroke.setStyle(Paint.Style.STROKE);
             stroke.setStrokeCap(Paint.Cap.ROUND);
-            tones[0] = new ToneGenerator(AudioManager.STREAM_MUSIC, 42);
-            tones[1] = new ToneGenerator(AudioManager.STREAM_MUSIC, 42);
-            tones[2] = new ToneGenerator(AudioManager.STREAM_MUSIC, 55);
-            tones[3] = new ToneGenerator(AudioManager.STREAM_MUSIC, 42);
+            loadChart(context, R.raw.guitar_chart, guitar);
+            loadChart(context, R.raw.drums_chart, drums);
+            music = MediaPlayer.create(context, R.raw.frantic_frog_mix);
+            if (music != null) music.setLooping(false);
         }
 
-        void buildChart(int instrument) {
-            notes.clear();
-            long first = 2600;
-            long beat = 500;
-
-            for (int i = 0; i < 64; i++) {
-                long t = first + i * beat;
-                int side;
-                long hold = 0;
-
-                if (instrument == 0) { // guitar: alternating strums with sustained chords
-                    side = (i % 4 < 2) ? 0 : 1;
-                    if (i % 8 == 3 || i % 8 == 7) hold = 700;
-                    notes.add(new Note(side, t, hold));
-                    if (i % 8 == 5) notes.add(new Note(1 - side, t + 250, 0));
-                } else if (instrument == 1) { // bass: steady alternating pulse + long notes
-                    side = i % 2;
-                    if (i % 8 == 0 || i % 8 == 4) hold = 900;
-                    notes.add(new Note(side, t, hold));
-                } else if (instrument == 2) { // drums: faster two-thumb pattern, rare sustained roll
-                    side = (i % 4 == 0 || i % 4 == 3) ? 0 : 1;
-                    notes.add(new Note(side, t, 0));
-                    if (i % 4 == 1) notes.add(new Note(1 - side, t + 250, 0));
-                    if (i % 16 == 12) notes.add(new Note(1, t + 250, 650));
-                } else { // keyboard: alternating melody with sustained notes/chords
-                    side = (i % 3 == 0 || i % 3 == 1) ? 0 : 1;
-                    if (i % 8 == 2 || i % 8 == 6) hold = 1000;
-                    notes.add(new Note(side, t, hold));
-                    if (i % 8 == 4) notes.add(new Note(1 - side, t, 0));
+        void loadChart(Context context, int resource, ArrayList<Note> target) {
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(context.getResources().openRawResource(resource)))) {
+                String line; boolean first=true;
+                while ((line=br.readLine()) != null) {
+                    if (first) { first=false; continue; }
+                    String[] s=line.trim().split(",");
+                    if (s.length < 3) continue;
+                    target.add(new Note(Long.parseLong(s[0]), Integer.parseInt(s[1]), Long.parseLong(s[2])));
                 }
-            }
-            notes.sort(Comparator.comparingLong(n -> n.timeMs));
+            } catch (Exception ignored) {}
         }
 
-        void startSong(int instrument) {
-            selectedInstrument = instrument;
+        ArrayList<Note> chart() { return instrument==GUITAR ? guitar : drums; }
+
+        void startSong(int selected) {
+            instrument = selected;
             choosing = false;
             finished = false;
-            score = 0;
-            combo = 0;
-            bestCombo = 0;
-            frog.perfectStreak = 0;
-            frog.missStreak = 0;
-            frog.state = 0;
-            frog.playUntil = 0;
-            frog.lastSide = 0;
-            pointerSides.clear();
-            thumbDown[0] = thumbDown[1] = false;
-            activeHold[0] = activeHold[1] = null;
-            buildChart(instrument);
-            feedback = "GET READY — " + names[instrument];
-            feedbackUntil = SystemClock.elapsedRealtime() + 1600;
-            songStart = SystemClock.elapsedRealtime();
-            previousSongTime = 0;
+            audioStarted = false;
+            score = combo = bestCombo = perfectStreak = missStreak = frogState = 0;
+            feedback = "GET READY";
+            feedbackUntil = SystemClock.elapsedRealtime() + 1300;
+            pointerLane.clear();
+            for (int i=0;i<4;i++) lanePointers[i]=0;
+            for (Note n : guitar) { n.hit=false; n.done=false; }
+            for (Note n : drums) { n.hit=false; n.done=false; }
+            if (music != null) {
+                try { if (music.isPlaying()) music.pause(); music.seekTo(0); } catch (Exception ignored) {}
+            }
+            songEpoch = SystemClock.elapsedRealtime() + PREROLL_MS;
             invalidate();
         }
 
-        void returnToChooser() {
-            choosing = true;
-            finished = false;
-            selectedInstrument = -1;
-            pointerSides.clear();
-            thumbDown[0] = thumbDown[1] = false;
-            activeHold[0] = activeHold[1] = null;
-            feedback = "";
+        void backToChooser() {
+            if (music != null) try { if (music.isPlaying()) music.pause(); music.seekTo(0); } catch (Exception ignored) {}
+            choosing=true; finished=false; audioStarted=false; feedback="";
             invalidate();
+        }
+
+        long songTime(long now) {
+            if (audioStarted && music != null) {
+                try { return music.getCurrentPosition(); } catch (Exception ignored) {}
+            }
+            return now - songEpoch;
         }
 
         @Override protected void onDraw(Canvas c) {
-            if (choosing) {
-                drawChooser(c);
-                return;
-            }
-
             long now = SystemClock.elapsedRealtime();
-            long song = now - songStart;
+            if (choosing) { drawChooser(c); return; }
+            if (!audioStarted && now >= songEpoch) {
+                audioStarted=true;
+                if (music != null) try { music.start(); } catch (Exception ignored) {}
+            }
+            long song = songTime(now);
             update(song, now);
             drawGame(c, song, now);
-            previousSongTime = song;
             postInvalidateOnAnimation();
         }
 
         void update(long song, long now) {
-            if (finished) return;
-
-            for (Note n : notes) {
-                if (previousSongTime < n.timeMs && song >= n.timeMs) {
-                    playTone();
-                    frog.playUntil = Math.max(frog.playUntil, now + (n.isHold() ? 300 : 170));
-                    frog.lastSide = n.side;
-                }
-
-                if (n.holding && !n.judged && song >= n.timeMs + n.durationMs) {
-                    n.holding = false;
-                    n.judged = true;
-                    if (activeHold[n.side] == n) activeHold[n.side] = null;
-                    score += 250;
-                    applyResult(n.holdQuality, now);
-                }
-
-                if (!n.judged && !n.holding && song > n.timeMs + GOOD) {
-                    n.judged = true;
-                    applyResult("MISS", now);
+            if (finished || song < -TRAVEL_MS) return;
+            for (Note n : chart()) {
+                if (n.done) continue;
+                if (!n.hit && song > n.timeMs + GOOD_MS) {
+                    n.done=true;
+                    applyResult(3, now);
+                } else if (n.hit && n.durationMs > 0 && song >= n.timeMs + n.durationMs - 70) {
+                    if (lanePointers[n.lane] > 0) {
+                        n.done=true;
+                        score += 250;
+                        feedback="HOLD!";
+                        feedbackUntil=now+250;
+                    } else {
+                        n.done=true;
+                        applyResult(3, now);
+                    }
                 }
             }
+            if (song > SONG_MS + 700) { finished=true; feedback="SONG COMPLETE"; }
+        }
 
-            if (song > END_TIME) {
-                finished = true;
-                feedback = "SONG COMPLETE";
+        void attemptHit(int lane, long song, long now) {
+            if (finished) { backToChooser(); return; }
+            Note best=null; long bestDiff=Long.MAX_VALUE;
+            for (Note n : chart()) {
+                if (n.done || n.hit || n.lane != lane) continue;
+                long diff=Math.abs(song-n.timeMs);
+                if (diff < bestDiff) { best=n; bestDiff=diff; }
+                if (n.timeMs > song + GOOD_MS) break;
+            }
+            if (best==null || bestDiff>GOOD_MS) {
+                feedback="EARLY / LATE"; feedbackUntil=now+250; return;
+            }
+            best.hit=true;
+            lastPlayedLane=lane;
+            frogPlayUntil=now+170;
+            int result = bestDiff<=PERFECT_MS ? 0 : bestDiff<=GREAT_MS ? 1 : 2;
+            applyResult(result, now);
+            if (best.durationMs==0) best.done=true;
+        }
+
+        void releaseLane(int lane, long song, long now) {
+            for (Note n : chart()) {
+                if (!n.done && n.hit && n.lane==lane && n.durationMs>0) {
+                    if (song < n.timeMs+n.durationMs-100) {
+                        n.done=true;
+                        applyResult(3, now);
+                        feedback="HOLD RELEASED";
+                        feedbackUntil=now+500;
+                    }
+                }
             }
         }
 
-        void playTone() {
-            int tone;
-            if (selectedInstrument == 0) tone = ToneGenerator.TONE_DTMF_9;
-            else if (selectedInstrument == 1) tone = ToneGenerator.TONE_DTMF_2;
-            else if (selectedInstrument == 2) tone = ToneGenerator.TONE_PROP_BEEP2;
-            else tone = ToneGenerator.TONE_DTMF_6;
-            tones[selectedInstrument].startTone(tone, 65);
-        }
-
-        void pressThumb(int side, long song, long now) {
-            if (finished) {
-                returnToChooser();
-                return;
-            }
-            thumbDown[side] = true;
-
-            Note best = null;
-            long bestDiff = Long.MAX_VALUE;
-            for (Note n : notes) {
-                if (n.side != side || n.judged || n.holding) continue;
-                long diff = Math.abs(song - n.timeMs);
-                if (diff < bestDiff) {
-                    best = n;
-                    bestDiff = diff;
-                }
-                if (n.timeMs > song + GOOD) break;
-            }
-
-            if (best == null || bestDiff > GOOD) {
-                feedback = "TOO EARLY / LATE";
-                feedbackUntil = now + 350;
-                return;
-            }
-
-            frog.playUntil = now + (best.isHold() ? 320 : 180);
-            frog.lastSide = side;
-            String quality = bestDiff <= PERFECT ? "PERFECT" : bestDiff <= GREAT ? "GREAT" : "GOOD";
-
-            if (best.isHold()) {
-                best.holding = true;
-                best.holdQuality = quality;
-                activeHold[side] = best;
-                feedback = quality + " — HOLD";
-                feedbackUntil = now + 450;
+        void applyResult(int result, long now) {
+            if (result==0) {
+                missStreak=0; perfectStreak++; combo++;
+                score += 1000 + Math.min(combo,50)*10;
+                frogState = perfectStreak>=5 ? 2 : 0;
+                feedback="PERFECT";
+            } else if (result==1) {
+                missStreak=0; perfectStreak=0; combo++;
+                score += 650 + Math.min(combo,50)*5;
+                frogState=0; feedback="GREAT";
+            } else if (result==2) {
+                missStreak=0; perfectStreak=0; combo++;
+                score += 350; frogState=0; feedback="GOOD";
             } else {
-                best.judged = true;
-                applyResult(quality, now);
+                perfectStreak=0; missStreak++; combo=0;
+                frogState = missStreak>=3 ? 1 : 0;
+                feedback="MISS";
             }
-        }
-
-        void releaseThumb(int side, long song, long now) {
-            thumbDown[side] = false;
-            Note hold = activeHold[side];
-            if (hold == null || hold.judged) return;
-
-            long holdEnd = hold.timeMs + hold.durationMs;
-            if (song < holdEnd - 80) {
-                hold.holding = false;
-                hold.judged = true;
-                activeHold[side] = null;
-                applyResult("MISS", now);
-                feedback = "RELEASED EARLY  •  " + feedback;
-                feedbackUntil = now + 650;
-            }
-        }
-
-        void applyResult(String result, long now) {
-            if ("PERFECT".equals(result)) {
-                frog.missStreak = 0;
-                frog.perfectStreak++;
-                combo++;
-                score += 1000 + Math.min(combo, 50) * 10;
-                frog.state = frog.perfectStreak >= 5 ? 2 : 0;
-            } else if ("GREAT".equals(result)) {
-                frog.missStreak = 0;
-                frog.perfectStreak = 0;
-                frog.state = 0;
-                combo++;
-                score += 650 + Math.min(combo, 50) * 5;
-            } else if ("GOOD".equals(result)) {
-                frog.missStreak = 0;
-                frog.perfectStreak = 0;
-                frog.state = 0;
-                combo++;
-                score += 350;
-            } else {
-                frog.perfectStreak = 0;
-                frog.missStreak++;
-                combo = 0;
-                frog.state = frog.missStreak >= 3 ? 1 : 0;
-            }
-
-            bestCombo = Math.max(bestCombo, combo);
-            feedback = result;
-            if (frog.state == 1) feedback += "  •  BLUE SHOCK!";
-            if (frog.state == 2) feedback += "  •  ON FIRE!";
-            feedbackUntil = now + 560;
-        }
-
-        void drawChooser(Canvas c) {
-            c.drawColor(Color.rgb(7,17,11));
-            text(c, "FROG BAND", getWidth()/2f, d(54), d(34), Color.WHITE, true);
-            text(c, "PICK YOUR FROG", getWidth()/2f, d(90), d(18), Color.rgb(160,236,159), true);
-            text(c, "Only your selected frog appears during the song", getWidth()/2f, d(116), d(11), Color.rgb(205,220,208), true);
-
-            float left = d(20);
-            float right = getWidth() - d(20);
-            float top = d(142);
-            float gap = d(11);
-            float cardH = (getHeight() - top - d(24) - gap * 3) / 4f;
-
-            for (int i=0; i<4; i++) {
-                float y1 = top + i * (cardH + gap);
-                float y2 = y1 + cardH;
-                p.setColor(Color.rgb(18,43,28));
-                c.drawRoundRect(left,y1,right,y2,d(15),d(15),p);
-                p.setColor(instrumentColor[i]);
-                c.drawRoundRect(left,y1,left+d(8),y2,d(8),d(8),p);
-                float frogX = left + d(58);
-                float frogY = (y1+y2)/2f;
-                drawSmallFrog(c,i,frogX,frogY);
-                textLeft(c,names[i],left+d(112),frogY-d(7),d(20),Color.WHITE);
-                textLeft(c,roles[i],left+d(112),frogY+d(17),d(12),Color.rgb(188,211,191));
-                text(c,"PLAY",right-d(31),frogY+d(4),d(11),instrumentColor[i],true);
-            }
-        }
-
-        void drawGame(Canvas c, long song, long now) {
-            int w = getWidth();
-            int h = getHeight();
-            float hitY = h * 0.75f; // exactly 1/4 of the screen up from the bottom
-            float leftX = w * 0.28f;
-            float rightX = w * 0.72f;
-            float spawnY = Math.max(d(250), h * 0.40f);
-
-            c.drawColor(Color.rgb(7,18,12));
-
-            // Header
-            text(c,"FROG BAND",w/2f,d(28),d(24),Color.WHITE,true);
-            text(c,names[selectedInstrument] + "   SCORE " + score + "   COMBO x" + combo,
-                    w/2f,d(52),d(11),Color.rgb(225,235,225),true);
-            float barL=d(18), barR=w-d(18), barY=d(64);
-            p.setColor(Color.rgb(45,72,52));
-            c.drawRoundRect(barL,barY,barR,barY+d(7),d(4),d(4),p);
-            p.setColor(Color.rgb(113,221,126));
-            float progress = Math.max(0f,Math.min(1f,song/(float)END_TIME));
-            c.drawRoundRect(barL,barY,barL+(barR-barL)*progress,barY+d(7),d(4),d(4),p);
-
-            // Single selected frog
-            float frogY = Math.min(h * 0.245f, hitY - d(300));
-            frogY = Math.max(frogY, d(150));
-            drawMainFrog(c, selectedInstrument, w/2f, frogY, now);
-            text(c, roles[selectedInstrument], w/2f, frogY+d(88), d(12), Color.rgb(206,224,209), true);
-
-            // Note lanes
-            p.setColor(Color.argb(38,255,255,255));
-            c.drawRoundRect(d(18),spawnY-d(8),w/2f-d(7),hitY-d(13),d(16),d(16),p);
-            c.drawRoundRect(w/2f+d(7),spawnY-d(8),w-d(18),hitY-d(13),d(16),d(16),p);
-
-            for (Note n : notes) {
-                if (n.judged) continue;
-                long until = n.timeMs - song;
-                long endUntil = n.timeMs + n.durationMs - song;
-                if (until > TRAVEL || endUntil < -GOOD) continue;
-                float x = n.side == 0 ? leftX : rightX;
-                float y = hitY - (until / (float)TRAVEL) * (hitY - spawnY);
-                y = Math.min(hitY+d(20), y);
-
-                if (!n.isHold()) {
-                    p.setColor(instrumentColor[selectedInstrument]);
-                    c.drawCircle(x,y,d(18),p);
-                    p.setColor(Color.WHITE);
-                    c.drawCircle(x,y,d(7),p);
-                } else {
-                    float endY = hitY - (endUntil / (float)TRAVEL) * (hitY - spawnY);
-                    float topY = Math.min(y,endY);
-                    float bottomY = Math.max(y,endY);
-                    if (n.holding) bottomY = hitY;
-                    p.setColor(Color.argb(215,
-                            Color.red(instrumentColor[selectedInstrument]),
-                            Color.green(instrumentColor[selectedInstrument]),
-                            Color.blue(instrumentColor[selectedInstrument])));
-                    c.drawRoundRect(x-d(15),topY,x+d(15),bottomY,d(15),d(15),p);
-                    p.setColor(Color.WHITE);
-                    c.drawCircle(x,y,d(7),p);
-                }
-            }
-
-            // Hit bar: one quarter of the way up from bottom
-            p.setColor(Color.WHITE);
-            c.drawRect(0,hitY-d(3),w,hitY+d(3),p);
-            text(c,"HIT BAR",w/2f,hitY-d(10),d(9),Color.rgb(205,220,208),true);
-
-            // Two thumb zones below hit bar
-            drawThumbZone(c,0,d(12),hitY+d(14),w/2f-d(6),h-d(12),thumbDown[0]);
-            drawThumbZone(c,1,w/2f+d(6),hitY+d(14),w-d(12),h-d(12),thumbDown[1]);
-
-            if (now < feedbackUntil || finished) {
-                text(c,feedback,w/2f,spawnY-d(23),d(17),Color.WHITE,true);
-            }
-
-            if (frog.state == 1) {
-                text(c,"3+ MISSES — BLUE SHOCK",w/2f,frogY-d(83),d(12),Color.rgb(120,205,255),true);
-            } else if (frog.state == 2) {
-                text(c,"5+ PERFECTS — ON FIRE",w/2f,frogY-d(83),d(12),Color.rgb(255,198,83),true);
-            }
-
-            if (finished) {
-                p.setColor(Color.argb(220,0,0,0));
-                c.drawRoundRect(d(24),h*.36f,w-d(24),h*.61f,d(20),d(20),p);
-                text(c,"SONG COMPLETE",w/2f,h*.43f,d(27),Color.WHITE,true);
-                text(c,"Score " + score + "   Best combo x" + bestCombo,w/2f,h*.49f,d(14),Color.rgb(184,238,188),true);
-                text(c,"Tap either thumb zone to choose another frog",w/2f,h*.55f,d(11),Color.LTGRAY,true);
-            }
-        }
-
-        void drawThumbZone(Canvas c, int side, float l, float t, float r, float b, boolean down) {
-            int base = instrumentColor[selectedInstrument];
-            int alpha = down ? 170 : 82;
-            p.setColor(Color.argb(alpha,Color.red(base),Color.green(base),Color.blue(base)));
-            c.drawRoundRect(l,t,r,b,d(22),d(22),p);
-            stroke.setStrokeWidth(d(3));
-            stroke.setColor(down ? Color.WHITE : Color.argb(180,255,255,255));
-            c.drawRoundRect(l,t,r,b,d(22),d(22),stroke);
-            float cx=(l+r)/2f;
-            float cy=(t+b)/2f;
-            text(c,side==0?"LEFT THUMB":"RIGHT THUMB",cx,cy-d(9),d(14),Color.WHITE,true);
-            text(c,"TAP  •  HOLD",cx,cy+d(18),d(12),Color.rgb(225,235,225),true);
-        }
-
-        void drawSmallFrog(Canvas c,int instrument,float x,float y) {
-            p.setColor(Color.rgb(87,181,76));
-            c.drawOval(x-d(24),y-d(18),x+d(24),y+d(25),p);
-            c.drawCircle(x-d(14),y-d(22),d(10),p);
-            c.drawCircle(x+d(14),y-d(22),d(10),p);
-            p.setColor(Color.WHITE);
-            c.drawCircle(x-d(14),y-d(23),d(5),p);
-            c.drawCircle(x+d(14),y-d(23),d(5),p);
-            p.setColor(Color.BLACK);
-            c.drawCircle(x-d(14),y-d(23),d(2),p);
-            c.drawCircle(x+d(14),y-d(23),d(2),p);
-            drawInstrument(c,instrument,x,y,false,0);
-        }
-
-        void drawMainFrog(Canvas c,int instrument,float x,float y,long now) {
-            boolean playing = now < frog.playUntil;
-            y -= playing ? d(5) : 0;
-            if (frog.state == 2) drawFire(c,x,y);
-            if (frog.state == 1) drawShock(c,x,y);
-
-            int green = frog.state == 1 ? Color.rgb(61,139,220) : Color.rgb(87,181,76);
-            p.setColor(green);
-            c.drawOval(x-d(54),y-d(40),x+d(54),y+d(61),p);
-            c.drawCircle(x-d(32),y-d(50),d(23),p);
-            c.drawCircle(x+d(32),y-d(50),d(23),p);
-            p.setColor(Color.WHITE);
-            c.drawCircle(x-d(32),y-d(52),d(11),p);
-            c.drawCircle(x+d(32),y-d(52),d(11),p);
-            p.setColor(Color.BLACK);
-            c.drawCircle(x-d(32),y-d(52),d(4),p);
-            c.drawCircle(x+d(32),y-d(52),d(4),p);
-            stroke.setStrokeWidth(d(4));
-            stroke.setColor(frog.state==1 ? Color.rgb(30,82,145) : Color.rgb(28,67,30));
-            c.drawArc(x-d(24),y-d(7),x+d(24),y+d(20),0,180,false,stroke);
-            drawInstrument(c,instrument,x,y,playing,frog.lastSide);
-        }
-
-        void drawInstrument(Canvas c,int instrument,float x,float y,boolean playing,int side) {
-            float m = playing ? d(10) : 0;
-            float handShift = side == 0 ? -m : m;
-            if (instrument == 0) {
-                p.setColor(Color.rgb(210,62,58));
-                c.drawOval(x-d(5),y+d(12),x+d(49),y+d(45),p);
-                stroke.setStrokeWidth(d(8)); stroke.setColor(Color.rgb(230,205,150));
-                c.drawLine(x+d(23),y+d(20),x-d(63),y-d(26),stroke);
-                stroke.setStrokeWidth(d(5)); stroke.setColor(Color.WHITE);
-                c.drawLine(x-d(5)+handShift,y-m,x+d(37),y+d(38)+m,stroke);
-            } else if (instrument == 1) {
-                p.setColor(Color.rgb(50,105,192));
-                c.drawOval(x-d(9),y+d(13),x+d(48),y+d(45),p);
-                stroke.setStrokeWidth(d(8)); stroke.setColor(Color.rgb(230,205,150));
-                c.drawLine(x+d(22),y+d(21),x-d(64),y-d(25),stroke);
-                stroke.setStrokeWidth(d(5)); stroke.setColor(Color.WHITE);
-                c.drawLine(x+d(3)+handShift,y+d(8),x+d(34),y+d(38)+m,stroke);
-            } else if (instrument == 2) {
-                p.setColor(Color.rgb(205,45,45));
-                c.drawCircle(x,y+d(34),d(28),p);
-                p.setColor(Color.rgb(235,190,50));
-                c.drawOval(x-d(62),y-d(8),x-d(15),y+d(4),p);
-                c.drawOval(x+d(15),y-d(8),x+d(62),y+d(4),p);
-                stroke.setStrokeWidth(d(5)); stroke.setColor(Color.rgb(225,190,128));
-                if (side == 0) c.drawLine(x-d(34),y-d(37)-m,x-d(4),y+d(23),stroke);
-                else c.drawLine(x+d(34),y-d(37)-m,x+d(4),y+d(23),stroke);
-            } else {
-                p.setColor(Color.rgb(70,70,84));
-                c.drawRoundRect(x-d(70),y+d(19),x+d(70),y+d(48),d(5),d(5),p);
-                p.setColor(Color.WHITE);
-                for (int i=0;i<10;i++) {
-                    float kx=x-d(62)+i*d(13);
-                    c.drawRect(kx,y+d(22),kx+d(9),y+d(43),p);
-                }
-                stroke.setStrokeWidth(d(7)); stroke.setColor(Color.rgb(118,205,96));
-                float hx = side==0 ? x-d(32) : x+d(32);
-                c.drawLine(hx,y-m,hx+handShift,y+d(27)+m,stroke);
-            }
-        }
-
-        void drawFire(Canvas c,float x,float y) {
-            for (int i=0;i<7;i++) {
-                float fx=x + (i-3)*d(16);
-                float top=y-d(84) - (i%2)*d(14);
-                Path flame=new Path();
-                flame.moveTo(fx-d(10),y+d(54));
-                flame.quadTo(fx-d(22),y-d(10),fx,top);
-                flame.quadTo(fx+d(25),y-d(7),fx+d(10),y+d(54));
-                flame.close();
-                p.setColor(i%2==0?Color.rgb(255,111,35):Color.rgb(255,190,45));
-                c.drawPath(flame,p);
-            }
-        }
-
-        void drawShock(Canvas c,float x,float y) {
-            stroke.setStrokeWidth(d(5));
-            stroke.setColor(Color.rgb(120,215,255));
-            for(int i=-2;i<=2;i++) {
-                float sx=x+i*d(25);
-                Path bolt=new Path();
-                bolt.moveTo(sx,y-d(82));
-                bolt.lineTo(sx+d(10),y-d(57));
-                bolt.lineTo(sx-d(7),y-d(34));
-                bolt.lineTo(sx+d(8),y-d(9));
-                c.drawPath(bolt,stroke);
-            }
+            bestCombo=Math.max(bestCombo,combo);
+            if (frogState==1) feedback += "  BLUE SHOCK!";
+            else if (frogState==2) feedback += "  ON FIRE!";
+            feedbackUntil=now+520;
         }
 
         @Override public boolean onTouchEvent(MotionEvent e) {
-            int action = e.getActionMasked();
-            int index = e.getActionIndex();
-
+            int action=e.getActionMasked();
+            int index=e.getActionIndex();
+            long now=SystemClock.elapsedRealtime();
             if (choosing) {
-                if (action == MotionEvent.ACTION_DOWN) {
-                    float y = e.getY();
-                    float top = d(142);
-                    float gap = d(11);
-                    float cardH = (getHeight() - top - d(24) - gap * 3) / 4f;
-                    for(int i=0;i<4;i++) {
-                        float y1=top+i*(cardH+gap);
-                        float y2=y1+cardH;
-                        if(y>=y1 && y<=y2) {
-                            startSong(i);
-                            return true;
-                        }
-                    }
+                if (action==MotionEvent.ACTION_DOWN) {
+                    float y=e.getY();
+                    if (y > getHeight()*0.30f && y < getHeight()*0.58f) startSong(GUITAR);
+                    else if (y >= getHeight()*0.62f && y < getHeight()*0.90f) startSong(DRUMS);
                 }
                 return true;
             }
-
-            long now = SystemClock.elapsedRealtime();
-            long song = now - songStart;
-
-            if (action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) {
-                int pointerId = e.getPointerId(index);
-                int side = e.getX(index) < getWidth()/2f ? 0 : 1;
-                pointerSides.put(pointerId, side);
-                pressThumb(side, song, now);
-                invalidate();
-                return true;
-            }
-
-            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) {
-                int pointerId = e.getPointerId(index);
-                int stored = pointerSides.get(pointerId, -1);
-                int side = stored >= 0 ? stored : (e.getX(index) < getWidth()/2f ? 0 : 1);
-                releaseThumb(side, song, now);
-                pointerSides.delete(pointerId);
-                invalidate();
-                return true;
-            }
-
-            if (action == MotionEvent.ACTION_CANCEL) {
-                for(int side=0;side<2;side++) {
-                    if(thumbDown[side]) releaseThumb(side,song,now);
+            if (action==MotionEvent.ACTION_DOWN || action==MotionEvent.ACTION_POINTER_DOWN) {
+                if (e.getY(index) < getHeight()*0.10f && e.getX(index) < getWidth()*0.22f) { backToChooser(); return true; }
+                int pointer=e.getPointerId(index);
+                int lane=Math.max(0,Math.min(3,(int)(e.getX(index)/(getWidth()/4f))));
+                pointerLane.put(pointer,lane); lanePointers[lane]++;
+                attemptHit(lane,songTime(now),now);
+            } else if (action==MotionEvent.ACTION_UP || action==MotionEvent.ACTION_POINTER_UP) {
+                int pointer=e.getPointerId(index);
+                int lane=pointerLane.get(pointer,-1);
+                if (lane>=0) {
+                    pointerLane.delete(pointer);
+                    lanePointers[lane]=Math.max(0,lanePointers[lane]-1);
+                    if (lanePointers[lane]==0) releaseLane(lane,songTime(now),now);
                 }
-                pointerSides.clear();
-                invalidate();
-                return true;
+            } else if (action==MotionEvent.ACTION_CANCEL) {
+                for (int lane=0;lane<4;lane++) {
+                    if (lanePointers[lane]>0) releaseLane(lane,songTime(now),now);
+                    lanePointers[lane]=0;
+                }
+                pointerLane.clear();
             }
-
             return true;
         }
 
+        void drawChooser(Canvas c) {
+            c.drawColor(Color.rgb(7,18,12));
+            text(c,"FROG BAND",getWidth()/2f,getHeight()*0.10f,getHeight()*0.050f,Color.WHITE,true);
+            text(c,"FRANTIC FROG",getWidth()/2f,getHeight()*0.16f,getHeight()*0.025f,Color.rgb(147,230,151),true);
+            text(c,"CHOOSE YOUR FROG",getWidth()/2f,getHeight()*0.22f,getHeight()*0.022f,Color.LTGRAY,true);
+            drawChoiceCard(c,GUITAR,getHeight()*0.30f,getHeight()*0.58f,"GUITAR FROG","4-LANE GUITAR");
+            drawChoiceCard(c,DRUMS,getHeight()*0.62f,getHeight()*0.90f,"DRUM FROG","4-LANE DRUMS");
+        }
+
+        void drawChoiceCard(Canvas c,int which,float top,float bottom,String title,String subtitle) {
+            float l=getWidth()*0.08f,r=getWidth()*0.92f;
+            p.setColor(Color.rgb(20,48,31)); c.drawRoundRect(l,top,r,bottom,d(22),d(22),p);
+            p.setColor(which==GUITAR?Color.rgb(215,68,62):Color.rgb(235,176,48));
+            c.drawRoundRect(l,top,l+d(10),bottom,d(10),d(10),p);
+            float x=l+(r-l)*0.25f,y=(top+bottom)/2f;
+            drawFrog(c,x,y,which,SystemClock.elapsedRealtime(),true);
+            textLeft(c,title,l+(r-l)*0.47f,y-d(9),d(22),Color.WHITE);
+            textLeft(c,subtitle,l+(r-l)*0.47f,y+d(18),d(13),Color.rgb(190,213,194));
+            text(c,"PLAY",r-d(42),y+d(5),d(12),Color.rgb(143,229,149),true);
+        }
+
+        void drawGame(Canvas c,long song,long now) {
+            c.drawColor(Color.rgb(7,17,11));
+            float w=getWidth(),h=getHeight();
+            float hitY=h*0.65f;
+            float spawnY=h*0.34f;
+            float laneW=w/4f;
+
+            p.setColor(Color.rgb(18,43,28)); c.drawRect(0,0,w,h*0.31f,p);
+            text(c,"BACK",w*0.09f,h*0.05f,d(12),Color.LTGRAY,true);
+            text(c,instrument==GUITAR?"GUITAR FROG":"DRUM FROG",w/2f,h*0.045f,d(16),Color.WHITE,true);
+            text(c,"SCORE "+score+"    COMBO x"+combo,w/2f,h*0.085f,d(12),Color.rgb(215,230,217),true);
+            drawFrog(c,w/2f,h*0.205f,instrument,now,false);
+
+            for (int i=0;i<4;i++) {
+                float l=i*laneW;
+                p.setColor(i%2==0?Color.rgb(12,28,19):Color.rgb(15,33,22));
+                c.drawRect(l,h*0.31f,l+laneW,h,p);
+                stroke.setColor(Color.argb(100,255,255,255)); stroke.setStrokeWidth(d(1));
+                c.drawLine(l,h*0.31f,l,h,stroke);
+            }
+            c.drawLine(w-1,h*0.31f,w-1,h,stroke);
+
+            for (Note n : chart()) {
+                if (n.done && !n.hit) continue;
+                long delta=n.timeMs-song;
+                if (delta>TRAVEL_MS+200 || delta<-GOOD_MS-500) continue;
+                float headY=hitY-(delta/(float)TRAVEL_MS)*(hitY-spawnY);
+                float cx=(n.lane+.5f)*laneW;
+                if (n.durationMs>0) {
+                    long endDelta=(n.timeMs+n.durationMs)-song;
+                    float tailY=hitY-(endDelta/(float)TRAVEL_MS)*(hitY-spawnY);
+                    float top=Math.min(headY,tailY),bot=Math.max(headY,tailY);
+                    p.setColor(Color.argb(n.hit?180:120, Color.red(laneColors[n.lane]),Color.green(laneColors[n.lane]),Color.blue(laneColors[n.lane])));
+                    c.drawRoundRect(cx-laneW*0.13f,top,cx+laneW*0.13f,bot,d(10),d(10),p);
+                }
+                p.setColor(n.hit?Color.WHITE:laneColors[n.lane]);
+                c.drawRoundRect(cx-laneW*0.28f,headY-d(12),cx+laneW*0.28f,headY+d(12),d(10),d(10),p);
+            }
+
+            p.setColor(Color.WHITE); c.drawRect(0,hitY-d(3),w,hitY+d(3),p);
+            text(c,"HIT",w/2f,hitY-d(10),d(10),Color.WHITE,true);
+
+            String[] labels=instrument==GUITAR?guitarLabels:drumLabels;
+            for (int i=0;i<4;i++) {
+                float l=i*laneW,r=l+laneW;
+                p.setColor(lanePointers[i]>0?laneColors[i]:Color.argb(120,Color.red(laneColors[i]),Color.green(laneColors[i]),Color.blue(laneColors[i])));
+                c.drawRoundRect(l+d(5),hitY+d(14),r-d(5),h-d(12),d(16),d(16),p);
+                text(c,labels[i],(l+r)/2f,hitY+(h-hitY)*0.48f,d(11),Color.WHITE,true);
+                text(c,"TAP / HOLD",(l+r)/2f,hitY+(h-hitY)*0.65f,d(8),Color.WHITE,true);
+            }
+
+            if (song<0) {
+                int count=(int)Math.ceil((-song)/700.0);
+                text(c,count>0?String.valueOf(count):"GO!",w/2f,h*0.47f,d(44),Color.WHITE,true);
+            } else if (now<feedbackUntil) {
+                int col=frogState==1?Color.CYAN:frogState==2?Color.rgb(255,130,30):Color.WHITE;
+                text(c,feedback,w/2f,h*0.30f,d(14),col,true);
+            }
+            if (finished) {
+                p.setColor(Color.argb(220,5,13,9)); c.drawRect(0,h*0.34f,w,h*0.62f,p);
+                text(c,"SONG COMPLETE",w/2f,h*0.44f,d(30),Color.WHITE,true);
+                text(c,"SCORE "+score+"   BEST COMBO "+bestCombo,w/2f,h*0.50f,d(15),Color.rgb(151,231,157),true);
+                text(c,"Tap any lane to choose again",w/2f,h*0.56f,d(12),Color.LTGRAY,true);
+            }
+        }
+
+        void drawFrog(Canvas c,float x,float y,int which,long now,boolean small) {
+            float s=small?0.75f:1.25f;
+            boolean playing=now<frogPlayUntil;
+            if (playing) y-=d(5)*s;
+            if (frogState==2 && !small) drawFire(c,x,y,s);
+            if (frogState==1 && !small) drawShock(c,x,y,s);
+            int green=(frogState==1&&!small)?Color.rgb(67,146,218):Color.rgb(89,181,77);
+            p.setColor(green);
+            c.drawOval(x-d(34)*s,y-d(24)*s,x+d(34)*s,y+d(38)*s,p);
+            c.drawCircle(x-d(21)*s,y-d(30)*s,d(14)*s,p); c.drawCircle(x+d(21)*s,y-d(30)*s,d(14)*s,p);
+            p.setColor(Color.WHITE); c.drawCircle(x-d(21)*s,y-d(31)*s,d(7)*s,p); c.drawCircle(x+d(21)*s,y-d(31)*s,d(7)*s,p);
+            p.setColor(Color.BLACK); c.drawCircle(x-d(21)*s,y-d(31)*s,d(3)*s,p); c.drawCircle(x+d(21)*s,y-d(31)*s,d(3)*s,p);
+            if (which==GUITAR) drawGuitar(c,x,y,s,playing); else drawDrums(c,x,y,s,playing);
+        }
+
+        void drawGuitar(Canvas c,float x,float y,float s,boolean playing) {
+            p.setColor(Color.rgb(205,63,57)); c.drawOval(x-d(7)*s,y+d(8)*s,x+d(39)*s,y+d(35)*s,p);
+            stroke.setStrokeWidth(d(6)*s); stroke.setColor(Color.rgb(229,204,151));
+            c.drawLine(x+d(18)*s,y+d(16)*s,x-d(46)*s,y-d(18)*s,stroke);
+            stroke.setStrokeWidth(d(3)*s); stroke.setColor(Color.WHITE);
+            float m=playing?(lastPlayedLane-1.5f)*d(5)*s:0;
+            c.drawLine(x-d(8)*s,y+m,x+d(29)*s,y+d(30)*s-m,stroke);
+        }
+
+        void drawDrums(Canvas c,float x,float y,float s,boolean playing) {
+            p.setColor(Color.rgb(225,168,45));
+            c.drawOval(x-d(34)*s,y+d(17)*s,x+d(7)*s,y+d(41)*s,p);
+            c.drawOval(x+d(4)*s,y+d(13)*s,x+d(39)*s,y+d(37)*s,p);
+            stroke.setColor(Color.rgb(220,202,150)); stroke.setStrokeWidth(d(3)*s);
+            float swing=playing?d(12)*s:0;
+            c.drawLine(x-d(18)*s,y-d(1)*s,x-d(31)*s,y+d(22)*s-swing,stroke);
+            c.drawLine(x+d(18)*s,y-d(1)*s,x+d(31)*s,y+d(20)*s-swing,stroke);
+        }
+
+        void drawFire(Canvas c,float x,float y,float s) {
+            Path path=new Path();
+            for (int i=-3;i<=3;i++) {
+                float fx=x+i*d(16)*s; path.reset();
+                path.moveTo(fx-d(8)*s,y+d(45)*s); path.lineTo(fx,y-d((i&1)==0?65:50)*s); path.lineTo(fx+d(8)*s,y+d(45)*s); path.close();
+                p.setColor(Color.rgb(255,107,30)); c.drawPath(path,p);
+            }
+        }
+
+        void drawShock(Canvas c,float x,float y,float s) {
+            stroke.setColor(Color.CYAN); stroke.setStrokeWidth(d(4)*s);
+            for (int i=-2;i<=2;i++) {
+                Path z=new Path(); float sx=x+i*d(22)*s;
+                z.moveTo(sx,y-d(58)*s); z.lineTo(sx-d(7)*s,y-d(37)*s); z.lineTo(sx+d(8)*s,y-d(27)*s); z.lineTo(sx-d(4)*s,y-d(6)*s);
+                c.drawPath(z,stroke);
+            }
+        }
+
+        float d(float dp) { return dp*getResources().getDisplayMetrics().density; }
         void text(Canvas c,String s,float x,float y,float size,int color,boolean center) {
-            p.setColor(color);
-            p.setTextSize(size);
-            p.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.BOLD));
-            p.setTextAlign(center?Paint.Align.CENTER:Paint.Align.LEFT);
-            c.drawText(s,x,y,p);
+            p.setTypeface(Typeface.create(Typeface.DEFAULT,Typeface.BOLD)); p.setTextSize(size); p.setColor(color); p.setTextAlign(center?Paint.Align.CENTER:Paint.Align.LEFT); c.drawText(s,x,y,p);
         }
+        void textLeft(Canvas c,String s,float x,float y,float size,int color) { text(c,s,x,y,size,color,false); }
 
-        void textLeft(Canvas c,String s,float x,float y,float size,int color) {
-            text(c,s,x,y,size,color,false);
+        @Override protected void onDetachedFromWindow() {
+            super.onDetachedFromWindow();
+            if (music!=null) { try { music.release(); } catch(Exception ignored){} music=null; }
         }
-
-        float d(float v) { return v * getResources().getDisplayMetrics().density; }
     }
 }
