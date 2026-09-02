@@ -1,0 +1,95 @@
+name: Export Frog Band Android Toolchain
+
+on:
+  push:
+    branches:
+      - frog-band-three-songs-v005
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-toolchain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+          validate-wrappers: false
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 35
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+
+      - name: Populate Android Gradle Plugin cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMP="$RUNNER_TEMP/frogband-toolchain-project"
+          mkdir -p "$TMP/app/src/main/java/com/example/toolchain" "$TMP/app/src/main/res/values"
+          cat > "$TMP/settings.gradle.kts" <<'EOF'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+          rootProject.name = "ToolchainWarmup"
+          include(":app")
+          EOF
+          cat > "$TMP/build.gradle.kts" <<'EOF'
+          plugins { id("com.android.application") version "8.7.3" apply false }
+          EOF
+          cat > "$TMP/app/build.gradle.kts" <<'EOF'
+          plugins { id("com.android.application") }
+          android {
+              namespace = "com.example.toolchain"
+              compileSdk = 35
+              defaultConfig { applicationId = "com.example.toolchain"; minSdk = 26; targetSdk = 35; versionCode = 1; versionName = "1" }
+          }
+          EOF
+          cat > "$TMP/app/src/main/AndroidManifest.xml" <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"><application android:theme="@style/AppTheme" /></manifest>
+          EOF
+          cat > "$TMP/app/src/main/res/values/styles.xml" <<'EOF'
+          <resources><style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar" /></resources>
+          EOF
+          (cd "$TMP" && gradle --no-daemon --console=plain :app:assembleDebug)
+
+      - name: Package toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/frogband-toolchain"
+          mkdir -p "$OUT/android-sdk/build-tools" "$OUT/android-sdk/platforms" "$OUT/gradle-user-home"
+          cp -a "$ANDROID_HOME/build-tools/35.0.0" "$OUT/android-sdk/build-tools/"
+          cp -a "$ANDROID_HOME/platforms/android-35" "$OUT/android-sdk/platforms/"
+          GRADLE_BIN="$(command -v gradle)"
+          GRADLE_ROOT="$(cd "$(dirname "$GRADLE_BIN")/.." && pwd)"
+          cp -a "$GRADLE_ROOT" "$OUT/gradle-8.9"
+          cp -a "$HOME/.gradle/caches" "$OUT/gradle-user-home/"
+          cp -a "$HOME/.gradle/native" "$OUT/gradle-user-home/" 2>/dev/null || true
+          du -sh "$OUT"/* || true
+          tar -I 'zstd -3 -T0' -cf "$GITHUB_WORKSPACE/frogband-android-toolchain.tar.zst" -C "$RUNNER_TEMP" frogband-toolchain
+          ls -lh "$GITHUB_WORKSPACE/frogband-android-toolchain.tar.zst"
+
+      - name: Upload toolchain
+        uses: actions/upload-artifact@v4
+        with:
+          name: frogband-android-toolchain
+          path: frogband-android-toolchain.tar.zst
+          if-no-files-found: error
+          retention-days: 2
