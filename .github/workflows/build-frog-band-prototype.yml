@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - frog-band-frantic-frog-v004
-  pull_request:
-    branches:
-      - main
+    paths:
+      - "frog-band-prototype/audio_b64/READY"
   workflow_dispatch:
 
 permissions:
@@ -41,7 +40,7 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
 
-      - name: Reconstruct Frantic Frog charts and song
+      - name: Reconstruct Frantic Frog charts and embedded song
         shell: bash
         run: |
           set -euo pipefail
@@ -50,21 +49,14 @@ jobs:
 
           base64 --decode frog-band-prototype/chart_b64/guitar.txt | gzip -dc > "$RAW/guitar_chart.csv"
           base64 --decode frog-band-prototype/chart_b64/drums.txt | gzip -dc > "$RAW/drums_chart.csv"
-
-          URL="https://cdn1.suno.ai/ef660e02-7490-469d-9b22-364e1cc45a63.mp3"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            --user-agent "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0 Safari/537.36" \
-            --header "Referer: https://suno.com/" \
-            --header "Origin: https://suno.com" \
-            --header "Accept: audio/mpeg,audio/*;q=0.9,*/*;q=0.8" \
-            "$URL" --output "$RAW/frantic_frog_mix.mp3"
+          cat frog-band-prototype/audio_b64/part_*.txt | base64 --decode > "$RAW/frantic_frog_mix.opus"
 
           test -s "$RAW/guitar_chart.csv"
           test -s "$RAW/drums_chart.csv"
-          test -s "$RAW/frantic_frog_mix.mp3"
+          test -s "$RAW/frantic_frog_mix.opus"
           grep -q '^time_ms,lane,duration_ms' "$RAW/guitar_chart.csv"
           grep -q '^time_ms,lane,duration_ms' "$RAW/drums_chart.csv"
-          ls -lh "$RAW/guitar_chart.csv" "$RAW/drums_chart.csv" "$RAW/frantic_frog_mix.mp3"
+          ls -lh "$RAW/guitar_chart.csv" "$RAW/drums_chart.csv" "$RAW/frantic_frog_mix.opus"
 
       - name: Build Frog Band debug APK
         shell: bash
