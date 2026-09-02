@@ -51,11 +51,13 @@ jobs:
           base64 --decode frog-band-prototype/chart_b64/guitar.txt | gzip -dc > "$RAW/guitar_chart.csv"
           base64 --decode frog-band-prototype/chart_b64/drums.txt | gzip -dc > "$RAW/drums_chart.csv"
 
-          # The supplied Suno stems carry this original song ID in their metadata.
-          # Pull the original master so the APK uses the real Frantic Frog audio.
+          URL="https://cdn1.suno.ai/ef660e02-7490-469d-9b22-364e1cc45a63.mp3"
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://cdn1.suno.ai/ef660e02-7490-469d-9b22-364e1cc45a63.mp3" \
-            --output "$RAW/frantic_frog_mix.mp3"
+            --user-agent "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0 Safari/537.36" \
+            --header "Referer: https://suno.com/" \
+            --header "Origin: https://suno.com" \
+            --header "Accept: audio/mpeg,audio/*;q=0.9,*/*;q=0.8" \
+            "$URL" --output "$RAW/frantic_frog_mix.mp3"
 
           test -s "$RAW/guitar_chart.csv"
           test -s "$RAW/drums_chart.csv"
