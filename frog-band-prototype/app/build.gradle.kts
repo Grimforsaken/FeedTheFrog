@@ -8,7 +8,7 @@ android {
         applicationId = "com.grimforsaken.frogband"
         minSdk = 26
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3-two-thumb"
+        versionCode = 4
+        versionName = "0.4-frantic-frog"
     }
 }
